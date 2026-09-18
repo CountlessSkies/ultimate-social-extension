@@ -201,17 +201,20 @@ function installThreadsDownloadHitInterceptor() {
   // Some Saved-carousel cells have a Threads-owned transparent pressable
   // layer above our attached button. Detect a press inside the visible icon
   // rectangle before that layer handles it; the icon still stays in its card.
-  document.addEventListener('pointerdown', event => {
+  const intercept = (event: PointerEvent | MouseEvent, startDownload: boolean) => {
     if (event.button !== 0 || event.target instanceof Element && event.target.closest('.sc-thread-btn')) return;
     for (const [button, download] of threadsDownloadHitAreas) {
       if (!button.isConnected) { threadsDownloadHitAreas.delete(button); continue; }
       const rect = button.getBoundingClientRect();
       if (getComputedStyle(button).display === 'none' || event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) continue;
       event.preventDefault(); event.stopImmediatePropagation(); event.stopPropagation();
-      void download();
+      if (startDownload) void download();
       return;
     }
-  }, true);
+  };
+  document.addEventListener('pointerdown', event => intercept(event, true), true);
+  // Prevent the later synthesized click from reaching Threads' post opener.
+  document.addEventListener('click', event => intercept(event, false), true);
 }
 
 function threadsDownloader() {
