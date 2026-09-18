@@ -231,6 +231,13 @@ function threadsDownloader() {
       // therefore useless; only accept a real, visible post-media box.
       if (box.width < 120 || box.height < 120 || /profile picture|avatar/.test(alt)) return;
     }
+    else {
+      // Threads uses a 1px "Video player" node for attached music/audio.
+      // It is not downloadable video and its overlay otherwise lands on a
+      // nearby carousel image, looking like a broken third-image button.
+      const box = media.getBoundingClientRect();
+      if (box.width < 120 || box.height < 120) return;
+    }
     media.setAttribute('data-sc-dl', '1');
     // Current Threads wraps each carousel image in a button. Appending a button
     // inside it creates invalid nested controls and makes the carousel paint black.
