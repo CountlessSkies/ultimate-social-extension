@@ -7,7 +7,7 @@
 // @match        https://*.instagram.com/*
 // @match        https://*.threads.net/*
 // @match        https://*.threads.com/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_download
