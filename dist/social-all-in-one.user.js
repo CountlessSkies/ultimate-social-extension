@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.19.1537
+// @version      2026.10.19.1546
 // @description  Facebook quick-save, Instagram tools and media download, Threads media tools.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -2214,7 +2214,9 @@ location.hostname.includes('instagram.com') && (() => {
   function decorateGrid() {
     document.querySelectorAll('a[href]:not([data-sc-grid])').forEach((a) => {
       const match = a.getAttribute('href').match(CODE_RE);
-      if (!match || a.closest('article')) return void (a.dataset.scGrid = '0');
+      // Feed posts are articles with a Like button; the Saved grid is wrapped
+      // in an article too, but its tiles still get a button.
+      if (!match || a.closest('article')?.querySelector(LIKE_SVG)) return void (a.dataset.scGrid = '0');
       const img = a.querySelector('img');
       if (!img) return;
       const r = img.getBoundingClientRect();
