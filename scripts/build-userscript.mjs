@@ -1,5 +1,7 @@
-// Builds dist/social-all-in-one.user.js: the userscript header plus the bundle
-// in one file, so Tampermonkey can install and auto-update it from GitHub.
+// Builds dist/social-all-in-one.bundle.js from src/ (loaded by the local
+// Tampermonkey loader) and dist/social-all-in-one.user.js: the userscript
+// header plus the bundle in one file, so Tampermonkey can install and
+// auto-update it from GitHub.
 // Usage: node scripts/build-userscript.mjs
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -39,7 +41,10 @@ const header = `// ==UserScript==
 // ==/UserScript==
 `;
 
-const bundle = readFileSync(`${root}dist/social-all-in-one.bundle.js`, "utf8");
+// Order matters: shared.js defines helpers the other files use.
+const SOURCES = ["shared.js", "core.js", "facebook.js", "instagram.js"];
+const bundle = SOURCES.map((file) => readFileSync(`${root}src/${file}`, "utf8")).join("\n");
+writeFileSync(`${root}dist/social-all-in-one.bundle.js`, bundle);
 writeFileSync(`${root}dist/social-all-in-one.user.js`, `${header}\n${bundle}`);
 // Tampermonkey polls @updateURL; a header-only file keeps update checks light.
 writeFileSync(`${root}dist/social-all-in-one.meta.js`, header);
