@@ -281,6 +281,8 @@ GM_addStyle(`
               (n = o.match(/"token":"([A-Za-z0-9_-]+)","__typename":"LSD"/))
                 ? void 0
                 : n[1]) ||
+              // Current pages define it as ["LSD",[],{"token":"…"},…].
+              (o.match(/\["LSD",\[\],\{"token":"([^"]+)"/) || [])[1] ||
               a("lsd"),
             jazoest: r("jazoest") || a("jazoest"),
             isLoggedIn:
@@ -681,6 +683,91 @@ GM_addStyle(`
       };
       if (getComputedStyle(tile).position === "static") tile.style.position = "relative";
       tile.append(button);
+    });
+  }
+  // Threads post data, read from what the page itself loaded (first-load JSON
+  // and GraphQL responses) instead of replaying a GraphQL query: code ->
+  // { user, items: [{ url, kind }] } with every carousel item.
+  const threadsPosts = new Map();
+  const largestUrl = (list) =>
+    (list || []).reduce((best, c) => (!best || (c.width || 0) * (c.height || 0) > (best.width || 0) * (best.height || 0) ? c : best), null)?.url;
+  function rememberThreadsPost(p) {
+    const items = (p.carousel_media && p.carousel_media.length ? p.carousel_media : [p])
+      .map((c) => {
+        const video = largestUrl(c.video_versions);
+        return video ? { url: video, kind: "video" } : { url: largestUrl(c.image_versions2 && c.image_versions2.candidates), kind: "image" };
+      })
+      .filter((item) => item.url);
+    if (items.length) threadsPosts.set(p.code, { user: p.user && p.user.username, items });
+    if (threadsPosts.size > 2000) threadsPosts.delete(threadsPosts.keys().next().value);
+  }
+  function scanThreadsPayload(text) {
+    if (typeof text !== "string" || !/image_versions2|video_versions/.test(text)) return;
+    for (const line of text.replace(/^for \(;;\);/, "").split("\n")) {
+      let stack;
+      try {
+        stack = [JSON.parse(line)];
+      } catch {
+        continue;
+      }
+      for (let n = 0; stack.length && n++ < 5e5; ) {
+        const v = stack.pop();
+        if (Array.isArray(v)) stack.push(...v);
+        else if (v && "object" == typeof v) {
+          if ("string" == typeof v.code && (v.carousel_media || v.image_versions2)) rememberThreadsPost(v);
+          for (const x of Object.values(v)) x && "object" == typeof x && stack.push(x);
+        }
+      }
+    }
+  }
+  function scanThreadsPageData() {
+    document.querySelectorAll('script[type="application/json"]:not([data-sc-scanned])').forEach((s) => {
+      s.dataset.scScanned = "1";
+      if (s.textContent.includes('"image_versions2"')) scanThreadsPayload(s.textContent);
+    });
+  }
+
+  // Threads posts with several images/videos: a stack button beside quick
+  // save that downloads every item of the post.
+  function threadsMediaCount(post) {
+    return [...post.querySelectorAll('img, div[aria-label="Video player"]')].filter((el) => {
+      if (el instanceof HTMLImageElement && (/profile picture|avatar/i.test(el.alt) || el.closest('div[aria-label="Video player"]')))
+        return !1;
+      const r = el.getBoundingClientRect();
+      return r.width >= 120 && r.height >= 120;
+    }).length;
+  }
+  function decorateThreadsAll() {
+    scanThreadsPageData();
+    document.querySelectorAll(".sc-threads-save-container:not([data-sc-all])").forEach((box) => {
+      const post = box.closest("[data-pressable-container]");
+      const match = post && post.querySelector('a[href*="/post/"]')?.href.match(/\/@([^/]+)\/post\/([^/?#]+)/);
+      if (!match) return;
+      const [, user, code] = match;
+      const cached = threadsPosts.get(code);
+      if (cached && cached.items.length < 2) return void (box.dataset.scAll = "0");
+      // Without data yet, rely on what is rendered; images load lazily, so
+      // posts that do not show two media yet are retried on the next pass.
+      if (!cached && threadsMediaCount(post) < 2) return;
+      box.dataset.scAll = "1";
+      const button = scButton("inline", "stack", "Tải cả bài", { small: !0 });
+      button.classList.add("sc-threads-all-btn");
+      button.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        scRun(button, async () => {
+          scanThreadsPageData();
+          const data = threadsPosts.get(code);
+          const items = data ? data.items : await m(code);
+          if (!items.length) throw new Error("Không lấy được media của bài.");
+          // threads_<user>_<original file name>, like the single-item buttons.
+          for (const item of items) {
+            const name = new URL(item.url).pathname.split("/").pop() || ("video" === item.kind ? "video.mp4" : "image.jpg");
+            await f(item.url, `threads_${(data && data.user) || user}_${name}`);
+          }
+        });
+      };
+      box.prepend(button);
     });
   }
   function w() {
@@ -1110,7 +1197,8 @@ GM_addStyle(`
         t.fetch = async (t, o) => {
           const r =
             "string" == typeof t ? t : t instanceof URL ? t.href : t.url;
-          if (/threads\.(?:com|net)\/graphql\//.test(r)) {
+          const isGraphql = /\/graphql\//.test(r);
+          if (isGraphql) {
             const e = new Headers(
               (null == o ? void 0 : o.headers) ||
                 (t instanceof Request ? t.headers : void 0),
@@ -1125,16 +1213,31 @@ GM_addStyle(`
               o && (n[t] = o);
             }
           }
-          return e(t, o);
+          const res = await e(t, o);
+          isGraphql &&
+            res
+              .clone()
+              .text()
+              .then(scanThreadsPayload)
+              .catch(() => {});
+          return res;
         };
         const o = t.XMLHttpRequest,
           r = o.prototype.open,
           a = o.prototype.setRequestHeader;
         (o.prototype.open = function (t, e, ...n) {
           return (
-            (this.__scThreadsGraphql = /threads\.(?:com|net)\/graphql\//.test(
-              String(e),
-            )),
+            (this.__scThreadsGraphql = /\/graphql\//.test(String(e))),
+            this.__scThreadsGraphql &&
+              this.addEventListener(
+                "loadend",
+                () => {
+                  try {
+                    ("" !== this.responseType && "text" !== this.responseType) || scanThreadsPayload(this.responseText);
+                  } catch {}
+                },
+                { once: !0 },
+              ),
             r.call(this, t, e, ...n)
           );
         }),
@@ -1156,11 +1259,12 @@ GM_addStyle(`
         once: !0,
       });
     GM_addStyle(
-      "#sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:#635bff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s ease}#sc-launcher:hover{transform:scale(1.06)}#sc-launcher .sc-icon{width:20px;height:20px}#sc-panel{position:fixed;right:18px;bottom:68px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#161618;color:#e7e7ea;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:14px;font:13px system-ui,sans-serif}#sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.06);color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:8px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:rgba(255,255,255,.08)}.sc-btn.danger{background:#b4232f}.sc-muted{color:#8d8d94;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:rgba(0,0,0,.35);border-radius:8px}.sc-ov.sc-unsave-btn{right:8px;top:8px}.sc-ov.sc-thread-btn{right:10px;top:10px}.sc-in.sc-threads-save-btn{color:var(--barcelona-secondary-icon,currentColor)!important}"
+      "#sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:#635bff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s ease}#sc-launcher:hover{transform:scale(1.06)}#sc-launcher .sc-icon{width:20px;height:20px}#sc-panel{position:fixed;right:18px;bottom:68px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#161618;color:#e7e7ea;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:14px;font:13px system-ui,sans-serif}#sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.06);color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:8px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:rgba(255,255,255,.08)}.sc-btn.danger{background:#b4232f}.sc-muted{color:#8d8d94;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:rgba(0,0,0,.35);border-radius:8px}.sc-ov.sc-unsave-btn{right:8px;top:8px}.sc-ov.sc-thread-btn{right:10px;top:10px}.sc-in.sc-threads-save-btn,.sc-in.sc-threads-all-btn{color:var(--barcelona-secondary-icon,currentColor)!important}"
     ),
       // The ⚡ scanner only works on instagram.com (it calls Instagram APIs).
       "instagram" === u() && _(),
       scWatchDom(w),
+      "threads" === u() && scWatchDom(decorateThreadsAll),
       console.info("[Social All-in-One] active:", u());
   })();
 })();
@@ -1185,11 +1289,11 @@ location.hostname.includes("facebook.com") &&
     // Photo objects carry "image" (the feed-sized copy) and "viewer_image" (the
     // large copy the photo viewer shows, same original file name), keyed by the
     // fbid that photo links use.
-    const photos = new Map(); // fbid -> { uri, ownerId }
+    const photos = new Map(); // fbid -> { uri }
     function rememberPhoto(photo) {
       const image = photo.viewer_image;
       if (!image || typeof image.uri !== "string" || !photo.id) return;
-      photos.set(String(photo.id), { uri: image.uri, ownerId: photo.owner && photo.owner.id });
+      photos.set(String(photo.id), { uri: image.uri });
       if (photos.size > 3000) photos.delete(photos.keys().next().value);
     }
     const mediasets = new Map(); // mediaset_token -> [fbid, ...] in post order
@@ -1616,18 +1720,23 @@ location.hostname.includes("facebook.com") &&
         return null;
       }
     };
-    // The author: the post header link, or the profile/viewer page owner.
-    function photoOwner(scope, photo) {
+    // The author's username: the post header link, or the profile/viewer page
+    // owner. Numeric profile.php ids are not usernames; without a username the
+    // photo's fbid is used instead.
+    function photoOwner(scope, fbid) {
+      const username = (href) => {
+        const name = profileNameOf(href);
+        return name && !/^\d+$/.test(name) ? name : null;
+      };
       const post = scope && scope.closest('[aria-posinset],[role="article"]');
       const header = post && post.querySelector("h2 a[href], h3 a[href], h4 a[href], strong a[href]");
       return (
-        (header && profileNameOf(header.href)) ||
-        profileNameOf(location.href) ||
+        (header && username(header.href)) ||
+        username(location.href) ||
         [...document.querySelectorAll('[role="dialog"] h2 a[href], [role="complementary"] h2 a[href], [role="main"] h2 a[href]')]
-          .map((a) => profileNameOf(a.href))
+          .map((a) => username(a.href))
           .find(Boolean) ||
-        (photo && photo.ownerId) ||
-        "facebook"
+        fbid
       );
     }
     // Downloads the large viewer copy when known, otherwise the copy on screen.
@@ -1636,7 +1745,7 @@ location.hostname.includes("facebook.com") &&
       const photo = photos.get(fbid);
       const url = (photo && photo.uri) || img.currentSrc || img.src;
       if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
-      await scSaveUrl(url, `${safeName(photoOwner(scope, photo))}_${safeName(fileNameOf(url))}`);
+      await scSaveUrl(url, `${safeName(photoOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
     }
     const setTokenOf = (href) => {
       try {
@@ -1656,7 +1765,7 @@ location.hostname.includes("facebook.com") &&
           missing++;
           continue;
         }
-        await scSaveUrl(photo.uri, `${safeName(photoOwner(scope, photo))}_${safeName(fileNameOf(photo.uri))}`);
+        await scSaveUrl(photo.uri, `${safeName(photoOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
       }
       if (missing) throw new Error(`Thiếu dữ liệu ${missing}/${ids.length} ảnh — cuộn lại bài viết rồi thử lại`);
     }

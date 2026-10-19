@@ -18,11 +18,11 @@ location.hostname.includes("facebook.com") &&
     // Photo objects carry "image" (the feed-sized copy) and "viewer_image" (the
     // large copy the photo viewer shows, same original file name), keyed by the
     // fbid that photo links use.
-    const photos = new Map(); // fbid -> { uri, ownerId }
+    const photos = new Map(); // fbid -> { uri }
     function rememberPhoto(photo) {
       const image = photo.viewer_image;
       if (!image || typeof image.uri !== "string" || !photo.id) return;
-      photos.set(String(photo.id), { uri: image.uri, ownerId: photo.owner && photo.owner.id });
+      photos.set(String(photo.id), { uri: image.uri });
       if (photos.size > 3000) photos.delete(photos.keys().next().value);
     }
     const mediasets = new Map(); // mediaset_token -> [fbid, ...] in post order
@@ -449,18 +449,23 @@ location.hostname.includes("facebook.com") &&
         return null;
       }
     };
-    // The author: the post header link, or the profile/viewer page owner.
-    function photoOwner(scope, photo) {
+    // The author's username: the post header link, or the profile/viewer page
+    // owner. Numeric profile.php ids are not usernames; without a username the
+    // photo's fbid is used instead.
+    function photoOwner(scope, fbid) {
+      const username = (href) => {
+        const name = profileNameOf(href);
+        return name && !/^\d+$/.test(name) ? name : null;
+      };
       const post = scope && scope.closest('[aria-posinset],[role="article"]');
       const header = post && post.querySelector("h2 a[href], h3 a[href], h4 a[href], strong a[href]");
       return (
-        (header && profileNameOf(header.href)) ||
-        profileNameOf(location.href) ||
+        (header && username(header.href)) ||
+        username(location.href) ||
         [...document.querySelectorAll('[role="dialog"] h2 a[href], [role="complementary"] h2 a[href], [role="main"] h2 a[href]')]
-          .map((a) => profileNameOf(a.href))
+          .map((a) => username(a.href))
           .find(Boolean) ||
-        (photo && photo.ownerId) ||
-        "facebook"
+        fbid
       );
     }
     // Downloads the large viewer copy when known, otherwise the copy on screen.
@@ -469,7 +474,7 @@ location.hostname.includes("facebook.com") &&
       const photo = photos.get(fbid);
       const url = (photo && photo.uri) || img.currentSrc || img.src;
       if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
-      await scSaveUrl(url, `${safeName(photoOwner(scope, photo))}_${safeName(fileNameOf(url))}`);
+      await scSaveUrl(url, `${safeName(photoOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
     }
     const setTokenOf = (href) => {
       try {
@@ -489,7 +494,7 @@ location.hostname.includes("facebook.com") &&
           missing++;
           continue;
         }
-        await scSaveUrl(photo.uri, `${safeName(photoOwner(scope, photo))}_${safeName(fileNameOf(photo.uri))}`);
+        await scSaveUrl(photo.uri, `${safeName(photoOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
       }
       if (missing) throw new Error(`Thiếu dữ liệu ${missing}/${ids.length} ảnh — cuộn lại bài viết rồi thử lại`);
     }
