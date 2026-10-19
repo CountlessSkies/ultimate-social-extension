@@ -1772,28 +1772,37 @@ location.hostname.includes("facebook.com") &&
       try {
         const url = new URL(href, location.href);
         if (!url.hostname.endsWith("facebook.com")) return null;
-        const first = url.pathname.split("/").filter(Boolean)[0];
+        const parts = url.pathname.split("/").filter(Boolean);
+        const first = parts[0];
         if (first === "profile.php") return url.searchParams.get("id");
-        if (!first || /^(photo|photo\.php|photos|groups|watch|reel|stories|events|pages|permalink\.php|story\.php|hashtag)$/.test(first))
+        // Group posts link the author as /groups/<group>/user/<id>/.
+        if (first === "groups" && parts[2] === "user" && /^\d+$/.test(parts[3] || "")) return parts[3];
+        // Paths that are Facebook features, not profiles.
+        if (
+          !first ||
+          /^(photo|photo\.php|photos|groups|watch|reel|reels|stories|events|pages|permalink\.php|story\.php|hashtag|l\.php|share|sharer|sharer\.php|search|messages|notifications|friends|bookmarks|saved|marketplace|gaming|ads|business|help|privacy|policies|login|home\.php|media|video\.php|live)$/i.test(first)
+        )
           return null;
         return first;
       } catch {
         return null;
       }
     };
-    // Who posted the photo: their username, else their numeric profile id (from
-    // a profile.php?id= link or the photo's GraphQL owner), else the photo's
-    // fbid. Every header link is checked: in groups the first one is the group.
+    // Who posted: the first profile link of the post (its header comes first:
+    // avatar and name; a group link resolves to nothing, so in groups the next
+    // link, the member, wins), else the profile/viewer page owner, else the
+    // GraphQL owner id, else the media id. Vanity names and numeric profile ids
+    // both count.
     function mediaOwner(scope, fbid, ownerId = photos.get(fbid)?.ownerId) {
-      const post = scope && scope.closest('[aria-posinset],[role="article"]');
-      const names = [
-        ...(post ? post.querySelectorAll("h2 a[href], h3 a[href], h4 a[href], strong a[href]") : []),
+      const post = scope && scope.closest('[aria-posinset],[role="article"],[role="dialog"]');
+      const fromPost = post && [...post.querySelectorAll("a[href]")].slice(0, 10).map((a) => profileNameOf(a.href)).find(Boolean);
+      const fromPage = [
         location,
         ...document.querySelectorAll('[role="dialog"] h2 a[href], [role="complementary"] h2 a[href], [role="main"] h2 a[href]'),
       ]
         .map((a) => profileNameOf(a.href))
-        .filter(Boolean);
-      return names.find((n) => !/^\d+$/.test(n)) || names.find((n) => /^\d+$/.test(n)) || ownerId || fbid;
+        .find(Boolean);
+      return fromPost || fromPage || ownerId || fbid;
     }
     // Downloads the large viewer copy when known, otherwise the copy on screen.
     async function downloadPhoto(fbid, img, scope) {
@@ -1942,7 +1951,20 @@ location.hostname.includes("facebook.com") &&
           const m = a.href.match(/\/reel\/(\d+)|\/videos\/(?:[^/?]+\/)?(\d+)|[?&]v=(\d+)/);
           if (m) return m[1] || m[2] || m[3];
         }
-      return videoIdFromUrl();
+      return videoIdFromUrl() || videoIdFromSegments();
+    }
+    // Last resort for players without any link (ads, some shared videos): the
+    // segments a playing video fetched carry the file name of one of its DASH
+    // streams, so the newest segment names point at the manifest they belong to.
+    function videoIdFromSegments() {
+      const names = performance
+        .getEntriesByType("resource")
+        .map((e) => e.name)
+        .filter((u) => /\.fbcdn\.net\//i.test(u) && /\.mp4(?:[?#]|$)/i.test(u))
+        .reverse()
+        .map(fileNameOf);
+      for (const name of names) for (const [id, entry] of videos) if (entry.dash && entry.dash.includes(name)) return id;
+      return null;
     }
     async function downloadVideo(video) {
       scanPageData();
@@ -1953,14 +1975,58 @@ location.hostname.includes("facebook.com") &&
       if (!url) throw new Error("Chưa có dữ liệu video này — cuộn lại hoặc tải lại trang");
       await scSaveUrl(url, `${safeName(mediaOwner(video, id, data.ownerId))}_${id}.mp4`);
     }
+    // Facebook lays a transparent click layer (it opens the video) over feed
+    // players, covering anything placed inside them. The buttons therefore live
+    // in <body> as fixed elements, kept on each video's top-right corner and
+    // hidden when the video is off screen or under another layer (a dialog).
+    const videoButtons = new Map(); // video -> button
+    function placeVideoButtons() {
+      for (const [video, button] of videoButtons) {
+        if (!video.isConnected) {
+          button.remove();
+          videoButtons.delete(video);
+          continue;
+        }
+        const r = video.getBoundingClientRect();
+        const x = r.right - 44;
+        const y = Math.max(r.top + 8, 8);
+        let visible =
+          !isStoryPage() && r.width >= 200 && r.height >= 150 && r.top < innerHeight - 40 && r.bottom > y + 40 && r.right > 0 && r.left < innerWidth;
+        if (visible) {
+          // Hidden under a dialog, the sticky header or navigation that does not
+          // hold the video; the player's own click layer does not count.
+          const top = document.elementsFromPoint(x + 16, y + 16).find((el) => el !== button && !button.contains(el));
+          const layer = top && top.closest('[role="dialog"],[role="banner"],[role="navigation"]');
+          visible = !!top && (!layer || layer.contains(video));
+        }
+        if (!visible) {
+          button.style.setProperty("display", "none", "important");
+          continue;
+        }
+        button.style.removeProperty("display");
+        button.style.left = `${Math.round(x)}px`;
+        button.style.top = `${Math.round(y)}px`;
+      }
+    }
+    let placeFrame = 0;
+    const schedulePlaceVideoButtons = () => {
+      if (!placeFrame)
+        placeFrame = requestAnimationFrame(() => {
+          placeFrame = 0;
+          placeVideoButtons();
+        });
+    };
+    window.addEventListener("scroll", schedulePlaceVideoButtons, { capture: true, passive: true });
+    window.addEventListener("resize", schedulePlaceVideoButtons, { passive: true });
+    // Players also move without scrolling (feed inserts, autoplay resizing).
+    setInterval(() => videoButtons.size && placeVideoButtons(), 1000);
+
     function decorateVideos() {
       if (isStoryPage()) return;
       document.querySelectorAll("video:not([data-sc-video])").forEach((video) => {
         const r = video.getBoundingClientRect();
-        const host = video.parentElement;
-        if (!host || r.width < 200 || r.height < 150) return;
+        if (r.width < 200 || r.height < 150) return;
         video.dataset.scVideo = "1";
-        if (getComputedStyle(host).position === "static") host.style.position = "relative";
         const button = scButton("overlay", "download", "Tải video (nét nhất, không tiếng)");
         button.classList.add("sc-fb-video-dl");
         const stop = (e) => {
@@ -1976,8 +2042,10 @@ location.hostname.includes("facebook.com") &&
           },
           true,
         );
-        host.append(button);
+        document.body.append(button);
+        videoButtons.set(video, button);
       });
+      placeVideoButtons();
     }
 
     // Look comes from the shared kit; only placement and Facebook's icon colour here.
@@ -1986,7 +2054,7 @@ location.hostname.includes("facebook.com") &&
         ".sc-in.sc-facebook-quick-unsave{color:var(--secondary-icon,currentColor)!important}" +
         "#sc-facebook-story-dl,#sc-fb-photo-viewer-dl,#sc-fb-photo-viewer-all{position:fixed;z-index:2147483647}" +
         ".sc-in.sc-facebook-quick-set{position:absolute;right:80px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
-        ".sc-ov.sc-fb-photo-dl,.sc-ov.sc-fb-video-dl{right:8px;top:8px}",
+        ".sc-ov.sc-fb-photo-dl{right:8px;top:8px}.sc-ov.sc-fb-video-dl{position:fixed;z-index:2147483646}",
     );
 
     scWatchDom(() => {
