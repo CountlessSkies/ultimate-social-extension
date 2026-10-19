@@ -4,13 +4,10 @@
 // ARCHITECTURE.md before changing carousel resolution or file naming.
 location.hostname.includes('instagram.com') && (() => {
   const CLASS = 'ig-minimal-download';
-  const ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7Zm-14 9v2h14v-2H5Z"/></svg>';
-  const ALL_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6Zm16-4H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Zm-6 13-4-4h3V5h2v6h3l-4 4Z"/></svg>';
   // The S hotkey targets single-item buttons; "all" buttons are reached with Shift+S.
   const SINGLE = `.${CLASS}:not([data-kind="all"])`;
   const isCarousel = (scope) =>
     !!scope.querySelector('button[aria-label^="Go to slide"], button[aria-label="Next"], button[aria-label="Tiếp"]');
-  const ROUND_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/></svg>';
   // Like/Unlike icons: anchoring on the label (not the outline-heart path)
   // keeps the button on posts that are already liked.
   const LIKE_SVG = 'svg[aria-label="Like"],svg[aria-label="Unlike"],svg[aria-label="Thích"],svg[aria-label="Bỏ thích"]';
@@ -342,22 +339,11 @@ location.hostname.includes('instagram.com') && (() => {
     return button.closest('article, [role="dialog"]') || document.querySelector('[role="dialog"] article, article') || document;
   }
 
-  function setButtonState(button, state) {
-    const colors = { idle: !isFeedPage() || button.dataset.hotkeyTarget === 'true' ? '#0095f6' : '#fff', loading: '#f59e0b', done: '#22a06b', failed: '#ed4956' };
-    if (state === 'idle') delete button.dataset.state;
-    else button.dataset.state = state;
-    button.style.backgroundColor = 'transparent';
-    button.style.color = colors[state];
-    button.style.transform = state === 'loading' ? 'scale(.92)' : 'scale(1)';
-    button.title = state === 'loading' ? 'Downloading…' : state === 'done' ? 'Downloaded' : state === 'failed' ? 'Download failed' : button.dataset.kind === 'all' ? 'Download all media of this post (Shift+S)' : `Download ${button.dataset.kind}`;
-  }
-
   async function startDownload(button) {
-    if (!button || button.dataset.state === 'loading') return;
-    setButtonState(button, 'loading');
-    try {
-      // Do not retain a custom DOM object on the button: Tampermonkey crosses
-      // an isolated-world boundary for such properties. Resolve it at click time.
+    if (!button) return;
+    // Do not retain a custom DOM object on the button: Tampermonkey crosses
+    // an isolated-world boundary for such properties. Resolve it at click time.
+    await scRun(button, async () => {
       const scope = postScopeOf(button);
       if (button.dataset.kind === 'all') {
         const short = shortcodeFrom(scope);
@@ -366,14 +352,7 @@ location.hostname.includes('instagram.com') && (() => {
       } else {
         await save(await resolvePostOrReel(scope));
       }
-      setButtonState(button, 'done');
-    } catch (error) {
-      setButtonState(button, 'failed');
-      button.title = `Download failed: ${error.message}`;
-      console.error(SC_TAG, error);
-    } finally {
-      setTimeout(() => setButtonState(button, 'idle'), 1800);
-    }
+    });
   }
 
   // A button counts only when it is on screen and not covered by an overlay
@@ -398,16 +377,14 @@ location.hostname.includes('instagram.com') && (() => {
   }
 
   let indicatorFrame = 0;
+  // The button the S hotkey would download gets the accent colour.
   function refreshHotkeyIndicator() {
-    if (!isFeedPage() || indicatorFrame) return;
+    if (indicatorFrame) return;
     indicatorFrame = requestAnimationFrame(() => {
       indicatorFrame = 0;
       const target = nearestVisibleButton();
       document.querySelectorAll(SINGLE).forEach((button) => {
-        const isTarget = button === target;
-        button.dataset.hotkeyTarget = String(isTarget);
-        // Keep the loading / done / failed colours until the button resets.
-        if (!button.dataset.state) button.style.color = isTarget ? '#0095f6' : '#fff';
+        button.dataset.target = String(button === target);
       });
     });
   }
@@ -486,12 +463,11 @@ location.hostname.includes('instagram.com') && (() => {
 
   function addButton(container, kind) {
     if (!(container instanceof HTMLElement) || container.querySelector(`.${CLASS}[data-kind="${kind}"]`)) return;
-    const button = document.createElement('a');
-    button.className = CLASS;
+    const button = kind === 'all'
+      ? scButton('inline', 'stack', 'Tải cả bài (Shift+S)')
+      : scButton('inline', 'download', kind === 'reel' ? 'Tải reel này (S)' : 'Tải ảnh/video đang xem (S)');
+    button.classList.add(CLASS);
     button.dataset.kind = kind;
-    button.innerHTML = kind === 'all' ? ALL_ICON : ICON;
-    button.title = kind === 'all' ? 'Download all media of this post (Shift+S)' : `Download ${kind}`;
-    button.setAttribute('style', 'cursor:pointer;padding:7px;color:#0095f6;background:transparent;border-radius:8px;position:relative;display:inline-flex;z-index:999;line-height:0;transition:color .18s ease,transform .18s ease');
     button.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -616,34 +592,17 @@ location.hostname.includes('instagram.com') && (() => {
     for (const item of parent.carousel_media || [parent]) await save(toDownload(item, parent));
   }
 
-  // Round buttons for the story viewer and grid tiles.
-  function makeRoundButton(className, title, run) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = className;
-    button.title = title;
-    button.innerHTML = ROUND_ICON;
+  // Overlay buttons for the story viewer and grid tiles.
+  function makeOverlayButton(icon, title, run) {
+    const button = scButton('overlay', icon, title);
     const stop = (e) => {
       e.preventDefault();
       e.stopPropagation();
     };
     ['pointerdown', 'mousedown', 'dblclick'].forEach((type) => button.addEventListener(type, stop, true));
-    button.addEventListener('click', async (e) => {
+    button.addEventListener('click', (e) => {
       stop(e);
-      if (button.dataset.state) return;
-      button.dataset.state = 'busy';
-      try {
-        await run();
-        button.textContent = '✓';
-      } catch (err) {
-        button.textContent = '×';
-        button.title = `Lỗi: ${err instanceof Error ? err.message : String(err)}`;
-        console.error(SC_TAG, 'Instagram download:', err);
-      }
-      setTimeout(() => {
-        button.innerHTML = ROUND_ICON;
-        delete button.dataset.state;
-      }, 2500);
+      scRun(button, run);
     }, true);
     return button;
   }
@@ -652,7 +611,7 @@ location.hostname.includes('instagram.com') && (() => {
   // its header; falls back to the CSS corner position when no media is shown.
   function placeStoryButton(button) {
     const r = storyMediaEl()?.getBoundingClientRect();
-    button.style.left = r ? `${Math.round(r.right - 50)}px` : '';
+    button.style.left = r ? `${Math.round(r.right - 44)}px` : '';
     button.style.top = r ? `${Math.round(r.top + 92)}px` : '';
     button.style.right = button.style.bottom = r ? 'auto' : '';
   }
@@ -663,7 +622,7 @@ location.hostname.includes('instagram.com') && (() => {
       return;
     }
     if (!button) {
-      button = makeRoundButton('', 'Tải story này (phím S)', async () => save(await resolveStory()));
+      button = makeOverlayButton('download', 'Tải story này (S)', async () => save(await resolveStory()));
       button.id = 'sc-ig-page-dl';
       document.body.append(button);
       // The story viewer animates between items without DOM-wide mutations.
@@ -685,7 +644,9 @@ location.hostname.includes('instagram.com') && (() => {
       a.dataset.scGrid = '1';
       if (getComputedStyle(a).position === 'static') a.style.position = 'relative';
       const route = match[1] === 'p' ? 'p' : 'reel';
-      a.append(makeRoundButton('sc-ig-dl', 'Tải toàn bộ media của bài này', () => downloadWholePost(match[2], route)));
+      const button = makeOverlayButton('download', 'Tải cả bài', () => downloadWholePost(match[2], route));
+      button.classList.add('sc-ig-grid');
+      a.append(button);
     });
   }
 
@@ -714,8 +675,9 @@ location.hostname.includes('instagram.com') && (() => {
   window.addEventListener('scroll', refreshHotkeyIndicator, { passive: true });
   window.addEventListener('resize', refreshHotkeyIndicator, { passive: true });
 
+  // Look comes from the shared kit; only placement is set here.
   GM_addStyle(
-    '.sc-ig-dl{position:absolute!important;left:8px!important;top:8px!important;z-index:2147483645!important;display:flex!important;align-items:center!important;justify-content:center!important;width:32px!important;height:32px!important;padding:0!important;border:1.5px solid rgba(255,255,255,.55)!important;border-radius:50%!important;background:rgba(0,0,0,.62)!important;color:#fff!important;cursor:pointer!important;backdrop-filter:blur(8px)!important;box-shadow:0 3px 12px rgba(0,0,0,.35)!important}.sc-ig-dl:hover{background:rgba(0,0,0,.86)!important;transform:scale(1.1)!important}.sc-ig-dl svg,#sc-ig-page-dl svg{width:18px;height:18px;fill:currentColor}.sc-ig-dl[data-state=busy],#sc-ig-page-dl[data-state=busy]{opacity:.55!important;cursor:wait!important}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646;display:flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:1.5px solid rgba(255,255,255,.8);border-radius:50%;background:rgba(219,39,119,.92);color:#fff;box-shadow:0 3px 12px rgba(0,0,0,.45);cursor:pointer}#sc-ig-page-dl:hover{background:#be185d;transform:scale(1.08)}',
+    '.sc-ov.sc-ig-grid{left:8px;top:8px}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646}',
   );
 
   scWatchDom(() => {

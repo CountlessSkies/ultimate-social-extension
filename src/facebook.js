@@ -3,13 +3,6 @@ location.hostname.includes("facebook.com") &&
   (() => {
     "use strict";
 
-    const SAVE_ICON =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
-    const UNSAVE_ICON =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><line x1="4" y1="4" x2="20" y2="20"/></svg>';
-    const DOWNLOAD_ICON =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11.17l3.59-3.58L17 12l-5 5-5-5 1.41-1.41L11 14.17V3h1ZM5 19h14v2H5v-2Z"/></svg>';
-
     // ---- Network hook: remember playable video URLs from GraphQL responses ----
     // Facebook answers GraphQL/ajax calls with newline-separated JSON, sometimes
     // behind a `for (;;);` guard, so each line is parsed on its own. Only those
@@ -102,15 +95,14 @@ location.hostname.includes("facebook.com") &&
       ...["more actions", "post actions", "hành động khác", "hành động"].map((label) => `[aria-label="${label}" i]`),
     ].join(",");
 
-    async function quickSave(trigger, button) {
-      button.dataset.state = "saving";
+    // Resolves once the post is saved (or already was); throws otherwise.
+    async function quickSave(trigger) {
       trigger.click();
       const item = await scWaitFor(() => findMenuItem(SAVE_LABELS), { timeout: 3000 });
       if (!item) {
         const alreadySaved = !!findMenuItem(UNSAVE_LABELS);
         closeMenu(trigger);
-        button.dataset.state = alreadySaved ? "saved" : "error";
-        button.title = alreadySaved ? "Bài viết đã được lưu sẵn" : "Không tìm thấy mục Lưu";
+        if (!alreadySaved) throw new Error("Không tìm thấy mục Lưu");
         return;
       }
       item.click();
@@ -132,8 +124,6 @@ location.hostname.includes("facebook.com") &&
         { timeout: 1500 },
       );
       if (done) done.click();
-      button.dataset.state = "saved";
-      button.title = "Đã lưu bài viết";
     }
 
     function decorateQuickSave() {
@@ -142,25 +132,21 @@ location.hostname.includes("facebook.com") &&
         const host = trigger.parentElement && trigger.parentElement.parentElement;
         if (!host || host.querySelector(".sc-facebook-quick-save")) return;
         if (getComputedStyle(host).position === "static") host.style.position = "relative";
-        const wrap = document.createElement("span");
-        wrap.className = "sc-facebook-quick-save";
-        const button = document.createElement("button");
-        button.type = "button";
-        button.title = "Lưu nhanh bài viết";
-        button.setAttribute("aria-label", button.title);
-        button.innerHTML = SAVE_ICON;
-        wrap.append(button);
-        host.append(wrap);
+        const button = scButton("inline", "bookmark", "Lưu nhanh bài viết", { small: true });
+        button.classList.add("sc-facebook-quick-save");
+        host.append(button);
         button.addEventListener(
           "click",
-          (e) => {
+          async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (button.dataset.state === "saving" || button.dataset.state === "saved") return;
-            quickSave(trigger, button).catch((err) => {
-              button.dataset.state = "error";
-              button.title = `Lỗi: ${err.message}`;
-            });
+            if (button.dataset.saved) return;
+            await scRun(button, () => quickSave(trigger));
+            // Saved: keep a filled bookmark, like Facebook's own saved state.
+            if (button.dataset.state === "done") {
+              button.dataset.saved = "1";
+              scSetIcon(button, "bookmark-filled", "Đã lưu bài viết");
+            }
           },
           true,
         );
@@ -171,8 +157,6 @@ location.hostname.includes("facebook.com") &&
     const SAVED_ITEM_MENU_SELECTOR = '[aria-label="More options for saved item" i],[aria-label*="mục đã lưu" i]';
 
     async function quickUnsave(trigger, button) {
-      button.dataset.state = "unsaving";
-      button.title = "Đang bỏ lưu…";
       trigger.click();
       const item = await scWaitFor(() => {
         if (trigger.getAttribute("aria-expanded") !== "true") return null;
@@ -181,17 +165,12 @@ location.hostname.includes("facebook.com") &&
       });
       if (!item) {
         closeMenu(trigger);
-        button.dataset.state = "error";
-        button.title = "Không tìm thấy mục Bỏ lưu — thử lại";
-        return;
+        throw new Error("Không tìm thấy mục Bỏ lưu — thử lại");
       }
       item.click();
       // Facebook removes the saved item once the unsave went through.
       const gone = await scWaitFor(() => !button.isConnected, { timeout: 4500 });
-      if (!gone) {
-        button.dataset.state = "error";
-        button.title = "Chưa xác nhận được bỏ lưu — thử lại";
-      }
+      if (!gone) throw new Error("Chưa xác nhận được bỏ lưu — thử lại");
     }
 
     function decorateQuickUnsave() {
@@ -200,23 +179,15 @@ location.hostname.includes("facebook.com") &&
         const anchor = trigger.parentElement && trigger.parentElement.parentElement;
         const host = anchor && anchor.parentElement;
         if (!host || host.querySelector(".sc-facebook-quick-unsave")) return;
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "sc-facebook-quick-unsave";
-        button.title = "Bỏ lưu nhanh";
-        button.setAttribute("aria-label", button.title);
-        button.innerHTML = UNSAVE_ICON;
+        const button = scButton("inline", "bookmark-off", "Bỏ lưu nhanh", { small: true });
+        button.classList.add("sc-facebook-quick-unsave");
         host.insertBefore(button, anchor);
         button.addEventListener(
           "click",
           (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (button.dataset.state === "unsaving") return;
-            quickUnsave(trigger, button).catch((err) => {
-              button.dataset.state = "error";
-              button.title = `Lỗi: ${err.message}`;
-            });
+            scRun(button, () => quickUnsave(trigger, button));
           },
           true,
         );
@@ -396,44 +367,30 @@ location.hostname.includes("facebook.com") &&
       const { video, box } = currentStory();
       if (!box) return void (button && button.remove());
       if (!button) {
-        button = document.createElement("button");
-        button.type = "button";
+        button = scButton("overlay", "download", "Tải Facebook Story");
         button.id = "sc-facebook-story-dl";
-        button.innerHTML = DOWNLOAD_ICON;
-        button.addEventListener("click", async (e) => {
+        button.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (button.dataset.state) return;
-          button.dataset.state = "busy";
-          button.textContent = "…";
-          try {
-            await downloadStory();
-            button.textContent = "✓";
-          } catch (err) {
-            button.textContent = "×";
-            button.title = `Không tải được Story: ${err instanceof Error ? err.message : String(err)}`;
-          }
-          setTimeout(() => {
-            button.innerHTML = DOWNLOAD_ICON;
-            delete button.dataset.state;
-          }, 1500);
+          scRun(button, downloadStory);
         });
         document.body.append(button);
       }
       // Only position and label are refreshed here; rewriting the content would
       // re-trigger the DOM observer and wipe the ✓/× feedback.
       const r = box.getBoundingClientRect();
-      button.style.left = `${Math.round(Math.max(8, r.right - 48))}px`;
-      button.style.top = `${Math.round(Math.max(8, r.top + 10))}px`;
-      if (!button.dataset.state) {
-        button.title = video ? "Tải Facebook Story video" : "Tải Facebook Story ảnh";
-        button.setAttribute("aria-label", button.title);
-      }
+      // Inside the top-right corner, below the story header controls.
+      button.style.left = `${Math.round(Math.max(8, r.right - 44))}px`;
+      button.style.top = `${Math.round(Math.max(8, r.top + 64))}px`;
+      button.dataset.label = video ? "Tải Facebook Story video" : "Tải Facebook Story ảnh";
+      if (!button.dataset.state) button.title = button.dataset.label;
     }
 
+    // Look comes from the shared kit; only placement and Facebook's icon colour here.
     GM_addStyle(
-      ".sc-facebook-quick-save{position:absolute!important;right:52px!important;top:2px!important;z-index:100!important}.sc-facebook-quick-save button,.sc-facebook-quick-unsave{width:30px!important;height:30px!important;border:0!important;border-radius:999px!important;display:grid!important;place-items:center!important;color:#fff!important;background:rgba(0,0,0,.56)!important;cursor:pointer!important}.sc-facebook-quick-save button:hover,.sc-facebook-quick-unsave:hover{background:rgba(0,0,0,.76)!important}.sc-facebook-quick-save button[data-state=saving],.sc-facebook-quick-unsave[data-state=unsaving]{opacity:.55!important;cursor:wait!important}.sc-facebook-quick-save button[data-state=saved] svg{fill:currentColor!important}.sc-facebook-quick-save button[data-state=error],.sc-facebook-quick-unsave[data-state=error]{background:rgba(190,18,60,.85)!important}.sc-facebook-quick-save svg,.sc-facebook-quick-unsave svg{width:17px!important;height:17px!important;fill:none!important;stroke:currentColor!important;stroke-width:2.2!important;stroke-linecap:round!important;stroke-linejoin:round!important}.sc-facebook-quick-unsave svg path{fill:currentColor!important}.sc-facebook-quick-unsave svg line{stroke:#fff!important;stroke-width:2.8!important}" +
-        "#sc-facebook-story-dl{position:fixed;z-index:2147483647;display:flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:1.5px solid rgba(255,255,255,.8);border-radius:50%;background:rgba(37,99,235,.9);color:#fff;box-shadow:0 3px 12px rgba(0,0,0,.45);cursor:pointer;backdrop-filter:blur(8px)}#sc-facebook-story-dl:hover{background:rgba(29,78,216,1);transform:scale(1.1)}#sc-facebook-story-dl svg{width:19px;height:19px;fill:currentColor}",
+      ".sc-in.sc-facebook-quick-save{position:absolute;right:46px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
+        ".sc-in.sc-facebook-quick-unsave{color:var(--secondary-icon,currentColor)!important}" +
+        "#sc-facebook-story-dl{position:fixed;z-index:2147483647}",
     );
 
     scWatchDom(() => {

@@ -401,7 +401,7 @@
   }
   function _() {
     const n = document.createElement("button");
-    (n.id = "sc-launcher"), (n.textContent = "⚡"), (n.title = "Social All-in-One");
+    (n.id = "sc-launcher"), (n.innerHTML = scIcon("bolt")), (n.title = "Social All-in-One");
     const o = document.createElement("section");
     (o.id = "sc-panel"),
       (o.hidden = !0),
@@ -459,9 +459,7 @@
   const IG_SAVE = 'svg[aria-label="Save" i],svg[aria-label="Lưu" i]';
   const IG_CLOSE = 'svg[aria-label="Close" i],svg[aria-label="Đóng" i]';
   async function instagramUnsave(tile, button) {
-    button.dataset.state = "busy";
-    button.textContent = "…";
-    try {
+    await scRun(button, async () => {
       tile.click();
       const dialog = await scWaitFor(() => [...document.querySelectorAll('[role="dialog"]')].find((d) => d.querySelector(IG_REMOVE)), {
         timeout: 5000,
@@ -474,24 +472,18 @@
       else history.back();
       if (!flipped) throw new Error("Chưa xác nhận được bỏ lưu");
       tile.style.display = "none";
-    } catch (err) {
-      button.textContent = "× " + (err instanceof Error ? err.message : String(err));
-      delete button.dataset.state;
-    }
+    });
   }
   function decorateInstagramUnsave() {
     if (!location.pathname.includes("/saved/all-posts/")) return;
     document.querySelectorAll('main a[href*="/p/"],main a[href*="/reel/"]').forEach((tile) => {
       if (tile.querySelector(".sc-unsave-btn")) return;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "sc-unsave-btn";
-      button.title = "Bỏ lưu bài này";
-      button.textContent = "✕ UNSAVE";
+      const button = scButton("overlay", "bookmark-off", "Bỏ lưu bài này");
+      button.classList.add("sc-unsave-btn");
       button.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!button.dataset.state) instagramUnsave(tile, button);
+        instagramUnsave(tile, button);
       };
       if (getComputedStyle(tile).position === "static") tile.style.position = "relative";
       tile.append(button);
@@ -527,17 +519,22 @@
               const a = r.querySelectorAll("svg").length,
                 i = document.createElement("div");
               (i.className = "sc-threads-save-container"),
-                (i.style.cssText = `position:absolute!important;right:${a > 1 ? "72px" : "40px"};top:-10px;z-index:100;display:flex;align-items:center;justify-content:center;width:32px;height:32px;`);
-              const s = document.createElement("button");
-              (s.className = "sc-threads-save-btn"),
-                (s.title = t ? "Bỏ lưu nhanh" : "Lưu nhanh"),
-                (s.innerHTML = t
-                  ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
-                  : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>'),
+                (i.style.cssText = `position:absolute!important;right:${a > 1 ? "70px" : "38px"};top:-8px;z-index:100;display:flex;align-items:center;`);
+              const s = scButton(
+                "inline",
+                t ? "bookmark-off" : "bookmark",
+                t ? "Bỏ lưu nhanh" : "Lưu nhanh",
+                { small: !0 },
+              );
+              s.classList.add("sc-threads-save-btn"),
                 (s.onclick = (n) => {
-                  n.preventDefault(),
+                  if (
+                    (n.preventDefault(),
                     n.stopPropagation(),
-                    s.classList.add("sc-loading"),
+                    "loading" === s.dataset.state)
+                  )
+                    return;
+                  scSetState(s, "loading"),
                     (
                       e.closest('[role="button"]') ||
                       e.closest("button") ||
@@ -568,20 +565,17 @@
                         item.closest('[role="menuitem"],button,[role="button"]') ||
                         item
                       ).click();
-                      s.classList.remove("sc-loading");
-                      s.classList.add("sc-success");
+                      scSetIcon(s, t ? "bookmark" : "bookmark-filled", t ? "Đã bỏ lưu" : "Đã lưu");
+                      scSetState(s, "done");
                     } else if (e && findItem(e, already)) {
                       // Already in the wanted state: close the menu, report done.
                       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: !0 }));
-                      s.classList.remove("sc-loading");
-                      s.classList.add("sc-success");
-                      s.title = t ? "Bài đã bỏ lưu sẵn" : "Bài đã được lưu sẵn";
+                      scSetIcon(s, t ? "bookmark" : "bookmark-filled", t ? "Đã bỏ lưu" : "Đã lưu");
+                      scSetState(s, "done");
                     } else if (++o < 15) setTimeout(r, 300);
                     else {
                       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: !0 }));
-                      s.classList.remove("sc-loading");
-                      s.classList.add("sc-error");
-                      s.title = "Không tìm thấy mục Lưu";
+                      scSetState(s, "error", "Không tìm thấy mục Lưu");
                     }
                   };
                   setTimeout(r, 600);
@@ -666,15 +660,8 @@
             o.classList.add("sc-dl-container"),
               "static" === getComputedStyle(o).position &&
                 (o.style.position = "relative");
-            const r = document.createElement("button");
-            (r.type = "button"),
-              (r.className = e
-                ? "sc-thread-btn"
-                : "sc-thread-btn sc-thread-video-btn"),
-              (r.innerHTML = e
-                ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.17l3.59-3.58L18 11l-6 6-6-6 1.41-1.41L11 13.17V3zm-6 16h14v2H5v-2z"/></svg>'
-                : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7L8 5zm9 14h2v2h-2v-2z"/></svg>'),
-              (r.title = e ? "Tải ảnh" : "Tải video");
+            const r = scButton("overlay", "download", e ? "Tải ảnh" : "Tải video");
+            r.classList.add("sc-thread-btn");
             const l = (function (t) {
                 var e;
                 let n = t;
@@ -705,7 +692,7 @@
             let p = !1;
             const g = async () => {
                 if (!p) {
-                  (p = !0), (r.textContent = "…");
+                  (p = !0), scSetState(r, "loading");
                   try {
                     if (e) {
                       // Largest srcset candidate: src is often a small one.
@@ -824,11 +811,10 @@
                         `threads_${l}_${(null == a ? void 0 : a.id) || n}.mp4`,
                       );
                     }
-                    r.textContent = "✓";
+                    scSetState(r, "done");
                   } catch (t) {
                     console.warn("[Social All-in-One]", t),
-                      (r.textContent = "×"),
-                      (r.title = `Lỗi tải: ${t instanceof Error ? t.message : String(t)}`);
+                      scSetState(r, "error", `Lỗi tải: ${t instanceof Error ? t.message : String(t)}`);
                   } finally {
                     p = !1;
                   }
@@ -976,7 +962,7 @@
         once: !0,
       });
     GM_addStyle(
-      "\n    #sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;border:0;border-radius:50%;width:46px;height:46px;background:#635bff;color:#fff;font-size:22px;cursor:pointer;box-shadow:0 6px 24px #0006}\n    #sc-panel{position:fixed;right:18px;bottom:74px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:12px;padding:14px;font:13px system-ui,sans-serif;box-shadow:0 16px 40px #0009}\n    #sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid #4b5563;border-radius:7px;background:#1f2937;color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:7px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:#374151}.sc-btn.danger{background:#be123c}.sc-muted{color:#9ca3af;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:#0b1220;border-radius:7px}.sc-unsave-btn{z-index:2147483645!important;cursor:pointer!important;border:0!important;color:#fff!important;background:#be123c!important;border-radius:999px!important;line-height:1!important}.sc-unsave-btn{position:absolute!important;right:6px!important;top:6px!important;padding:6px!important;font-size:10px!important}.sc-save-btn-small{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:rgba(99,102,241,.1);color:#6366f1;border:1px solid rgba(99,102,241,.2);border-radius:50%;cursor:pointer;transition:all .2s ease}.sc-save-btn-small:hover{background:rgba(99,102,241,.2);transform:scale(1.1)}.sc-threads-save-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:rgba(0,0,0,.5);color:rgba(255,255,255,.9);border:1px solid rgba(255,255,255,.4);border-radius:50%;cursor:pointer;backdrop-filter:blur(4px);transition:all .2s cubic-bezier(.175,.885,.32,1.275)}.sc-threads-save-btn:hover{background:rgba(0,0,0,.8);transform:scale(1.1);border-color:#fff;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.5)}.sc-loading{animation:sc-pulse 1s infinite ease-in-out}.sc-success{animation:sc-pop .4s forwards}.sc-threads-save-btn.sc-success svg,.sc-save-btn-small.sc-success svg{fill:currentColor!important;stroke:none!important}@keyframes sc-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.1);opacity:.7}}@keyframes sc-pop{0%{transform:scale(1)}50%{transform:scale(1.4)}100%{transform:scale(1.1)}}.sc-dl-container:hover .sc-thread-btn{opacity:1!important}.sc-thread-btn{position:absolute!important;right:10px!important;top:10px!important;z-index:2147483645!important;display:flex!important;align-items:center!important;justify-content:center!important;width:32px!important;height:32px!important;padding:0!important;border:1.5px solid rgba(255,255,255,.52)!important;border-radius:50%!important;background:rgba(0,0,0,.62)!important;color:rgba(255,255,255,.94)!important;backdrop-filter:blur(8px)!important;box-shadow:0 3px 12px rgba(0,0,0,.35)!important;opacity:.88!important;pointer-events:auto!important;cursor:pointer!important;transition:opacity .2s ease,transform .22s cubic-bezier(.175,.885,.32,1.275),background .2s ease!important}.sc-thread-btn:hover{background:rgba(0,0,0,.86)!important;transform:scale(1.12)!important;border-color:#fff!important}.sc-thread-btn svg{width:18px!important;height:18px!important;fill:currentColor!important}.sc-thread-video-btn{left:10px!important;right:auto!important;top:10px!important;bottom:auto!important;background:rgba(124,58,237,.82)!important;border-color:rgba(221,214,254,.9)!important}.sc-thread-video-btn:hover{background:rgba(109,40,217,.98)!important}\n  ",
+      "#sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:#635bff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s ease}#sc-launcher:hover{transform:scale(1.06)}#sc-launcher .sc-icon{width:20px;height:20px}#sc-panel{position:fixed;right:18px;bottom:68px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#161618;color:#e7e7ea;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:14px;font:13px system-ui,sans-serif}#sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.06);color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:8px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:rgba(255,255,255,.08)}.sc-btn.danger{background:#b4232f}.sc-muted{color:#8d8d94;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:rgba(0,0,0,.35);border-radius:8px}.sc-ov.sc-unsave-btn{right:8px;top:8px}.sc-ov.sc-thread-btn{right:10px;top:10px}.sc-in.sc-threads-save-btn{color:var(--barcelona-secondary-icon,currentColor)!important}"
     ),
       // The ⚡ scanner only works on instagram.com (it calls Instagram APIs).
       "instagram" === u() && _(),

@@ -96,6 +96,102 @@ async function scSaveUrl(url, name) {
   setTimeout(() => URL.revokeObjectURL(blobUrl), 6e4);
 }
 
+// ---- Button design kit ----
+// Two button styles, one icon set, one accent and four shared states:
+// - "overlay" (.sc-ov): round dark button laid over media (grid tiles, stories,
+//   Threads images, Saved-page unsave).
+// - "inline" (.sc-in): borderless icon next to the site's own controls (feed
+//   action row, post "..." menu); it takes the site's icon colour.
+// States: idle, loading (spinner), done (green check), error (red x; the
+// reason is in the tooltip).
+var SC_ACCENT = "#635bff";
+var SC_ICONS = {
+  download: '<path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2 -2v-2"/><path d="M7 11l5 5l5 -5"/><path d="M12 4l0 12"/>',
+  stack: '<path d="M12 4l-8 4l8 4l8 -4l-8 -4"/><path d="M4 12l8 4l8 -4"/><path d="M4 16l8 4l8 -4"/>',
+  bookmark: '<path d="M18 7v14l-6 -4l-6 4v-14a4 4 0 0 1 4 -4h4a4 4 0 0 1 4 4z"/>',
+  "bookmark-off":
+    '<path d="M7.708 3.721a3.982 3.982 0 0 1 2.292 -.721h4a4 4 0 0 1 4 4v7m0 4v3l-6 -4l-6 4v-14c0 -.308 .035 -.609 .1 -.897"/><path d="M3 3l18 18"/>',
+  check: '<path d="M5 12l5 5l10 -10"/>',
+  x: '<path d="M18 6l-12 12"/><path d="M6 6l12 12"/>',
+  loader: '<path d="M12 3a9 9 0 1 0 9 9"/>',
+  bolt: '<path d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11"/>',
+};
+// "<name>-filled" draws the same outline filled (e.g. a saved bookmark).
+var scIcon = (name) => {
+  const filled = name.endsWith("-filled");
+  const path = SC_ICONS[filled ? name.slice(0, -7) : name];
+  return `<svg class="sc-icon" viewBox="0 0 24 24" fill="${filled ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+};
+
+// `style` is "overlay" or "inline"; `small` makes an inline button match 20px
+// site icons (Facebook, Threads) instead of 24px ones (Instagram).
+function scButton(style, icon, title, { small = false } = {}) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = style === "overlay" ? "sc-ov" : small ? "sc-in sc-sm" : "sc-in";
+  button.dataset.icon = icon;
+  button.dataset.label = title;
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = scIcon(icon);
+  return button;
+}
+
+// Changes the icon a button shows when idle (e.g. bookmark -> filled bookmark).
+function scSetIcon(button, icon, title) {
+  button.dataset.icon = icon;
+  if (title) button.dataset.label = title;
+  if (!button.dataset.state) scSetState(button, "idle");
+}
+
+const scResetTimers = new WeakMap();
+function scSetState(button, state, message) {
+  clearTimeout(scResetTimers.get(button));
+  if (state === "idle") {
+    delete button.dataset.state;
+    button.innerHTML = scIcon(button.dataset.icon);
+    button.title = button.dataset.label;
+    return;
+  }
+  button.dataset.state = state;
+  button.innerHTML = scIcon({ loading: "loader", done: "check", error: "x" }[state]);
+  button.title = message || { loading: "Đang tải…", done: "Xong", error: "Có lỗi" }[state];
+  if (state !== "loading")
+    scResetTimers.set(button, setTimeout(() => scSetState(button, "idle"), state === "error" ? 6000 : 1800));
+}
+
+// Runs `job` with loading / done / error feedback; clicks while busy are ignored.
+async function scRun(button, job) {
+  if (button.dataset.state === "loading") return;
+  scSetState(button, "loading");
+  try {
+    await job();
+    scSetState(button, "done");
+  } catch (err) {
+    scSetState(button, "error", `Lỗi: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(SC_TAG, err);
+  }
+}
+
+GM_addStyle(`
+.sc-ov,.sc-in{box-sizing:border-box!important;margin:0!important;padding:0!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;cursor:pointer!important;line-height:0!important;font:inherit!important;transition:background-color .15s ease,color .15s ease,transform .15s ease!important}
+.sc-ov{position:absolute;z-index:2147483645;width:32px!important;height:32px!important;border:1px solid rgba(255,255,255,.25)!important;border-radius:50%!important;background:rgba(0,0,0,.55)!important;color:#fff!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
+.sc-ov:hover{background:rgba(0,0,0,.78)!important;transform:scale(1.06)}
+.sc-ov .sc-icon{width:18px;height:18px}
+.sc-ov[data-state=done]{background:#1d7a4f!important;border-color:#1d7a4f!important}
+.sc-ov[data-state=error]{background:#b4232f!important;border-color:#b4232f!important}
+.sc-in{width:40px!important;height:40px!important;border:0!important;border-radius:50%!important;background:transparent!important;color:inherit!important}
+.sc-in.sc-sm{width:34px!important;height:34px!important}
+.sc-in:hover{background:rgba(127,127,127,.16)!important}
+.sc-in .sc-icon{width:24px;height:24px}
+.sc-in.sc-sm .sc-icon{width:20px;height:20px}
+.sc-in[data-target=true],.sc-in[data-icon=bookmark-filled]{color:${SC_ACCENT}!important}
+.sc-in[data-state=done]{color:#1d9e5f!important}
+.sc-in[data-state=error]{color:#e0393e!important}
+.sc-ov[data-state=loading] .sc-icon,.sc-in[data-state=loading] .sc-icon{animation:sc-spin .8s linear infinite}
+@keyframes sc-spin{to{transform:rotate(360deg)}}
+`);
+
 !(function () {
   "use strict";
   const t = "sc:ig-results";
@@ -499,7 +595,7 @@ async function scSaveUrl(url, name) {
   }
   function _() {
     const n = document.createElement("button");
-    (n.id = "sc-launcher"), (n.textContent = "⚡"), (n.title = "Social All-in-One");
+    (n.id = "sc-launcher"), (n.innerHTML = scIcon("bolt")), (n.title = "Social All-in-One");
     const o = document.createElement("section");
     (o.id = "sc-panel"),
       (o.hidden = !0),
@@ -557,9 +653,7 @@ async function scSaveUrl(url, name) {
   const IG_SAVE = 'svg[aria-label="Save" i],svg[aria-label="Lưu" i]';
   const IG_CLOSE = 'svg[aria-label="Close" i],svg[aria-label="Đóng" i]';
   async function instagramUnsave(tile, button) {
-    button.dataset.state = "busy";
-    button.textContent = "…";
-    try {
+    await scRun(button, async () => {
       tile.click();
       const dialog = await scWaitFor(() => [...document.querySelectorAll('[role="dialog"]')].find((d) => d.querySelector(IG_REMOVE)), {
         timeout: 5000,
@@ -572,24 +666,18 @@ async function scSaveUrl(url, name) {
       else history.back();
       if (!flipped) throw new Error("Chưa xác nhận được bỏ lưu");
       tile.style.display = "none";
-    } catch (err) {
-      button.textContent = "× " + (err instanceof Error ? err.message : String(err));
-      delete button.dataset.state;
-    }
+    });
   }
   function decorateInstagramUnsave() {
     if (!location.pathname.includes("/saved/all-posts/")) return;
     document.querySelectorAll('main a[href*="/p/"],main a[href*="/reel/"]').forEach((tile) => {
       if (tile.querySelector(".sc-unsave-btn")) return;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "sc-unsave-btn";
-      button.title = "Bỏ lưu bài này";
-      button.textContent = "✕ UNSAVE";
+      const button = scButton("overlay", "bookmark-off", "Bỏ lưu bài này");
+      button.classList.add("sc-unsave-btn");
       button.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!button.dataset.state) instagramUnsave(tile, button);
+        instagramUnsave(tile, button);
       };
       if (getComputedStyle(tile).position === "static") tile.style.position = "relative";
       tile.append(button);
@@ -625,17 +713,22 @@ async function scSaveUrl(url, name) {
               const a = r.querySelectorAll("svg").length,
                 i = document.createElement("div");
               (i.className = "sc-threads-save-container"),
-                (i.style.cssText = `position:absolute!important;right:${a > 1 ? "72px" : "40px"};top:-10px;z-index:100;display:flex;align-items:center;justify-content:center;width:32px;height:32px;`);
-              const s = document.createElement("button");
-              (s.className = "sc-threads-save-btn"),
-                (s.title = t ? "Bỏ lưu nhanh" : "Lưu nhanh"),
-                (s.innerHTML = t
-                  ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'
-                  : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>'),
+                (i.style.cssText = `position:absolute!important;right:${a > 1 ? "70px" : "38px"};top:-8px;z-index:100;display:flex;align-items:center;`);
+              const s = scButton(
+                "inline",
+                t ? "bookmark-off" : "bookmark",
+                t ? "Bỏ lưu nhanh" : "Lưu nhanh",
+                { small: !0 },
+              );
+              s.classList.add("sc-threads-save-btn"),
                 (s.onclick = (n) => {
-                  n.preventDefault(),
+                  if (
+                    (n.preventDefault(),
                     n.stopPropagation(),
-                    s.classList.add("sc-loading"),
+                    "loading" === s.dataset.state)
+                  )
+                    return;
+                  scSetState(s, "loading"),
                     (
                       e.closest('[role="button"]') ||
                       e.closest("button") ||
@@ -666,20 +759,17 @@ async function scSaveUrl(url, name) {
                         item.closest('[role="menuitem"],button,[role="button"]') ||
                         item
                       ).click();
-                      s.classList.remove("sc-loading");
-                      s.classList.add("sc-success");
+                      scSetIcon(s, t ? "bookmark" : "bookmark-filled", t ? "Đã bỏ lưu" : "Đã lưu");
+                      scSetState(s, "done");
                     } else if (e && findItem(e, already)) {
                       // Already in the wanted state: close the menu, report done.
                       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: !0 }));
-                      s.classList.remove("sc-loading");
-                      s.classList.add("sc-success");
-                      s.title = t ? "Bài đã bỏ lưu sẵn" : "Bài đã được lưu sẵn";
+                      scSetIcon(s, t ? "bookmark" : "bookmark-filled", t ? "Đã bỏ lưu" : "Đã lưu");
+                      scSetState(s, "done");
                     } else if (++o < 15) setTimeout(r, 300);
                     else {
                       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: !0 }));
-                      s.classList.remove("sc-loading");
-                      s.classList.add("sc-error");
-                      s.title = "Không tìm thấy mục Lưu";
+                      scSetState(s, "error", "Không tìm thấy mục Lưu");
                     }
                   };
                   setTimeout(r, 600);
@@ -764,15 +854,8 @@ async function scSaveUrl(url, name) {
             o.classList.add("sc-dl-container"),
               "static" === getComputedStyle(o).position &&
                 (o.style.position = "relative");
-            const r = document.createElement("button");
-            (r.type = "button"),
-              (r.className = e
-                ? "sc-thread-btn"
-                : "sc-thread-btn sc-thread-video-btn"),
-              (r.innerHTML = e
-                ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.17l3.59-3.58L18 11l-6 6-6-6 1.41-1.41L11 13.17V3zm-6 16h14v2H5v-2z"/></svg>'
-                : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7L8 5zm9 14h2v2h-2v-2z"/></svg>'),
-              (r.title = e ? "Tải ảnh" : "Tải video");
+            const r = scButton("overlay", "download", e ? "Tải ảnh" : "Tải video");
+            r.classList.add("sc-thread-btn");
             const l = (function (t) {
                 var e;
                 let n = t;
@@ -803,7 +886,7 @@ async function scSaveUrl(url, name) {
             let p = !1;
             const g = async () => {
                 if (!p) {
-                  (p = !0), (r.textContent = "…");
+                  (p = !0), scSetState(r, "loading");
                   try {
                     if (e) {
                       // Largest srcset candidate: src is often a small one.
@@ -922,11 +1005,10 @@ async function scSaveUrl(url, name) {
                         `threads_${l}_${(null == a ? void 0 : a.id) || n}.mp4`,
                       );
                     }
-                    r.textContent = "✓";
+                    scSetState(r, "done");
                   } catch (t) {
                     console.warn("[Social All-in-One]", t),
-                      (r.textContent = "×"),
-                      (r.title = `Lỗi tải: ${t instanceof Error ? t.message : String(t)}`);
+                      scSetState(r, "error", `Lỗi tải: ${t instanceof Error ? t.message : String(t)}`);
                   } finally {
                     p = !1;
                   }
@@ -1074,7 +1156,7 @@ async function scSaveUrl(url, name) {
         once: !0,
       });
     GM_addStyle(
-      "\n    #sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;border:0;border-radius:50%;width:46px;height:46px;background:#635bff;color:#fff;font-size:22px;cursor:pointer;box-shadow:0 6px 24px #0006}\n    #sc-panel{position:fixed;right:18px;bottom:74px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#111827;color:#e5e7eb;border:1px solid #374151;border-radius:12px;padding:14px;font:13px system-ui,sans-serif;box-shadow:0 16px 40px #0009}\n    #sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid #4b5563;border-radius:7px;background:#1f2937;color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:7px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:#374151}.sc-btn.danger{background:#be123c}.sc-muted{color:#9ca3af;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:#0b1220;border-radius:7px}.sc-unsave-btn{z-index:2147483645!important;cursor:pointer!important;border:0!important;color:#fff!important;background:#be123c!important;border-radius:999px!important;line-height:1!important}.sc-unsave-btn{position:absolute!important;right:6px!important;top:6px!important;padding:6px!important;font-size:10px!important}.sc-save-btn-small{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:rgba(99,102,241,.1);color:#6366f1;border:1px solid rgba(99,102,241,.2);border-radius:50%;cursor:pointer;transition:all .2s ease}.sc-save-btn-small:hover{background:rgba(99,102,241,.2);transform:scale(1.1)}.sc-threads-save-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:rgba(0,0,0,.5);color:rgba(255,255,255,.9);border:1px solid rgba(255,255,255,.4);border-radius:50%;cursor:pointer;backdrop-filter:blur(4px);transition:all .2s cubic-bezier(.175,.885,.32,1.275)}.sc-threads-save-btn:hover{background:rgba(0,0,0,.8);transform:scale(1.1);border-color:#fff;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.5)}.sc-loading{animation:sc-pulse 1s infinite ease-in-out}.sc-success{animation:sc-pop .4s forwards}.sc-threads-save-btn.sc-success svg,.sc-save-btn-small.sc-success svg{fill:currentColor!important;stroke:none!important}@keyframes sc-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.1);opacity:.7}}@keyframes sc-pop{0%{transform:scale(1)}50%{transform:scale(1.4)}100%{transform:scale(1.1)}}.sc-dl-container:hover .sc-thread-btn{opacity:1!important}.sc-thread-btn{position:absolute!important;right:10px!important;top:10px!important;z-index:2147483645!important;display:flex!important;align-items:center!important;justify-content:center!important;width:32px!important;height:32px!important;padding:0!important;border:1.5px solid rgba(255,255,255,.52)!important;border-radius:50%!important;background:rgba(0,0,0,.62)!important;color:rgba(255,255,255,.94)!important;backdrop-filter:blur(8px)!important;box-shadow:0 3px 12px rgba(0,0,0,.35)!important;opacity:.88!important;pointer-events:auto!important;cursor:pointer!important;transition:opacity .2s ease,transform .22s cubic-bezier(.175,.885,.32,1.275),background .2s ease!important}.sc-thread-btn:hover{background:rgba(0,0,0,.86)!important;transform:scale(1.12)!important;border-color:#fff!important}.sc-thread-btn svg{width:18px!important;height:18px!important;fill:currentColor!important}.sc-thread-video-btn{left:10px!important;right:auto!important;top:10px!important;bottom:auto!important;background:rgba(124,58,237,.82)!important;border-color:rgba(221,214,254,.9)!important}.sc-thread-video-btn:hover{background:rgba(109,40,217,.98)!important}\n  ",
+      "#sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:#635bff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s ease}#sc-launcher:hover{transform:scale(1.06)}#sc-launcher .sc-icon{width:20px;height:20px}#sc-panel{position:fixed;right:18px;bottom:68px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#161618;color:#e7e7ea;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:14px;font:13px system-ui,sans-serif}#sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.06);color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:8px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:rgba(255,255,255,.08)}.sc-btn.danger{background:#b4232f}.sc-muted{color:#8d8d94;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:rgba(0,0,0,.35);border-radius:8px}.sc-ov.sc-unsave-btn{right:8px;top:8px}.sc-ov.sc-thread-btn{right:10px;top:10px}.sc-in.sc-threads-save-btn{color:var(--barcelona-secondary-icon,currentColor)!important}"
     ),
       // The ⚡ scanner only works on instagram.com (it calls Instagram APIs).
       "instagram" === u() && _(),
@@ -1087,13 +1169,6 @@ async function scSaveUrl(url, name) {
 location.hostname.includes("facebook.com") &&
   (() => {
     "use strict";
-
-    const SAVE_ICON =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>';
-    const UNSAVE_ICON =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/><line x1="4" y1="4" x2="20" y2="20"/></svg>';
-    const DOWNLOAD_ICON =
-      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11.17l3.59-3.58L17 12l-5 5-5-5 1.41-1.41L11 14.17V3h1ZM5 19h14v2H5v-2Z"/></svg>';
 
     // ---- Network hook: remember playable video URLs from GraphQL responses ----
     // Facebook answers GraphQL/ajax calls with newline-separated JSON, sometimes
@@ -1187,15 +1262,14 @@ location.hostname.includes("facebook.com") &&
       ...["more actions", "post actions", "hành động khác", "hành động"].map((label) => `[aria-label="${label}" i]`),
     ].join(",");
 
-    async function quickSave(trigger, button) {
-      button.dataset.state = "saving";
+    // Resolves once the post is saved (or already was); throws otherwise.
+    async function quickSave(trigger) {
       trigger.click();
       const item = await scWaitFor(() => findMenuItem(SAVE_LABELS), { timeout: 3000 });
       if (!item) {
         const alreadySaved = !!findMenuItem(UNSAVE_LABELS);
         closeMenu(trigger);
-        button.dataset.state = alreadySaved ? "saved" : "error";
-        button.title = alreadySaved ? "Bài viết đã được lưu sẵn" : "Không tìm thấy mục Lưu";
+        if (!alreadySaved) throw new Error("Không tìm thấy mục Lưu");
         return;
       }
       item.click();
@@ -1217,8 +1291,6 @@ location.hostname.includes("facebook.com") &&
         { timeout: 1500 },
       );
       if (done) done.click();
-      button.dataset.state = "saved";
-      button.title = "Đã lưu bài viết";
     }
 
     function decorateQuickSave() {
@@ -1227,25 +1299,21 @@ location.hostname.includes("facebook.com") &&
         const host = trigger.parentElement && trigger.parentElement.parentElement;
         if (!host || host.querySelector(".sc-facebook-quick-save")) return;
         if (getComputedStyle(host).position === "static") host.style.position = "relative";
-        const wrap = document.createElement("span");
-        wrap.className = "sc-facebook-quick-save";
-        const button = document.createElement("button");
-        button.type = "button";
-        button.title = "Lưu nhanh bài viết";
-        button.setAttribute("aria-label", button.title);
-        button.innerHTML = SAVE_ICON;
-        wrap.append(button);
-        host.append(wrap);
+        const button = scButton("inline", "bookmark", "Lưu nhanh bài viết", { small: true });
+        button.classList.add("sc-facebook-quick-save");
+        host.append(button);
         button.addEventListener(
           "click",
-          (e) => {
+          async (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (button.dataset.state === "saving" || button.dataset.state === "saved") return;
-            quickSave(trigger, button).catch((err) => {
-              button.dataset.state = "error";
-              button.title = `Lỗi: ${err.message}`;
-            });
+            if (button.dataset.saved) return;
+            await scRun(button, () => quickSave(trigger));
+            // Saved: keep a filled bookmark, like Facebook's own saved state.
+            if (button.dataset.state === "done") {
+              button.dataset.saved = "1";
+              scSetIcon(button, "bookmark-filled", "Đã lưu bài viết");
+            }
           },
           true,
         );
@@ -1256,8 +1324,6 @@ location.hostname.includes("facebook.com") &&
     const SAVED_ITEM_MENU_SELECTOR = '[aria-label="More options for saved item" i],[aria-label*="mục đã lưu" i]';
 
     async function quickUnsave(trigger, button) {
-      button.dataset.state = "unsaving";
-      button.title = "Đang bỏ lưu…";
       trigger.click();
       const item = await scWaitFor(() => {
         if (trigger.getAttribute("aria-expanded") !== "true") return null;
@@ -1266,17 +1332,12 @@ location.hostname.includes("facebook.com") &&
       });
       if (!item) {
         closeMenu(trigger);
-        button.dataset.state = "error";
-        button.title = "Không tìm thấy mục Bỏ lưu — thử lại";
-        return;
+        throw new Error("Không tìm thấy mục Bỏ lưu — thử lại");
       }
       item.click();
       // Facebook removes the saved item once the unsave went through.
       const gone = await scWaitFor(() => !button.isConnected, { timeout: 4500 });
-      if (!gone) {
-        button.dataset.state = "error";
-        button.title = "Chưa xác nhận được bỏ lưu — thử lại";
-      }
+      if (!gone) throw new Error("Chưa xác nhận được bỏ lưu — thử lại");
     }
 
     function decorateQuickUnsave() {
@@ -1285,23 +1346,15 @@ location.hostname.includes("facebook.com") &&
         const anchor = trigger.parentElement && trigger.parentElement.parentElement;
         const host = anchor && anchor.parentElement;
         if (!host || host.querySelector(".sc-facebook-quick-unsave")) return;
-        const button = document.createElement("button");
-        button.type = "button";
-        button.className = "sc-facebook-quick-unsave";
-        button.title = "Bỏ lưu nhanh";
-        button.setAttribute("aria-label", button.title);
-        button.innerHTML = UNSAVE_ICON;
+        const button = scButton("inline", "bookmark-off", "Bỏ lưu nhanh", { small: true });
+        button.classList.add("sc-facebook-quick-unsave");
         host.insertBefore(button, anchor);
         button.addEventListener(
           "click",
           (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (button.dataset.state === "unsaving") return;
-            quickUnsave(trigger, button).catch((err) => {
-              button.dataset.state = "error";
-              button.title = `Lỗi: ${err.message}`;
-            });
+            scRun(button, () => quickUnsave(trigger, button));
           },
           true,
         );
@@ -1481,44 +1534,30 @@ location.hostname.includes("facebook.com") &&
       const { video, box } = currentStory();
       if (!box) return void (button && button.remove());
       if (!button) {
-        button = document.createElement("button");
-        button.type = "button";
+        button = scButton("overlay", "download", "Tải Facebook Story");
         button.id = "sc-facebook-story-dl";
-        button.innerHTML = DOWNLOAD_ICON;
-        button.addEventListener("click", async (e) => {
+        button.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          if (button.dataset.state) return;
-          button.dataset.state = "busy";
-          button.textContent = "…";
-          try {
-            await downloadStory();
-            button.textContent = "✓";
-          } catch (err) {
-            button.textContent = "×";
-            button.title = `Không tải được Story: ${err instanceof Error ? err.message : String(err)}`;
-          }
-          setTimeout(() => {
-            button.innerHTML = DOWNLOAD_ICON;
-            delete button.dataset.state;
-          }, 1500);
+          scRun(button, downloadStory);
         });
         document.body.append(button);
       }
       // Only position and label are refreshed here; rewriting the content would
       // re-trigger the DOM observer and wipe the ✓/× feedback.
       const r = box.getBoundingClientRect();
-      button.style.left = `${Math.round(Math.max(8, r.right - 48))}px`;
-      button.style.top = `${Math.round(Math.max(8, r.top + 10))}px`;
-      if (!button.dataset.state) {
-        button.title = video ? "Tải Facebook Story video" : "Tải Facebook Story ảnh";
-        button.setAttribute("aria-label", button.title);
-      }
+      // Inside the top-right corner, below the story header controls.
+      button.style.left = `${Math.round(Math.max(8, r.right - 44))}px`;
+      button.style.top = `${Math.round(Math.max(8, r.top + 64))}px`;
+      button.dataset.label = video ? "Tải Facebook Story video" : "Tải Facebook Story ảnh";
+      if (!button.dataset.state) button.title = button.dataset.label;
     }
 
+    // Look comes from the shared kit; only placement and Facebook's icon colour here.
     GM_addStyle(
-      ".sc-facebook-quick-save{position:absolute!important;right:52px!important;top:2px!important;z-index:100!important}.sc-facebook-quick-save button,.sc-facebook-quick-unsave{width:30px!important;height:30px!important;border:0!important;border-radius:999px!important;display:grid!important;place-items:center!important;color:#fff!important;background:rgba(0,0,0,.56)!important;cursor:pointer!important}.sc-facebook-quick-save button:hover,.sc-facebook-quick-unsave:hover{background:rgba(0,0,0,.76)!important}.sc-facebook-quick-save button[data-state=saving],.sc-facebook-quick-unsave[data-state=unsaving]{opacity:.55!important;cursor:wait!important}.sc-facebook-quick-save button[data-state=saved] svg{fill:currentColor!important}.sc-facebook-quick-save button[data-state=error],.sc-facebook-quick-unsave[data-state=error]{background:rgba(190,18,60,.85)!important}.sc-facebook-quick-save svg,.sc-facebook-quick-unsave svg{width:17px!important;height:17px!important;fill:none!important;stroke:currentColor!important;stroke-width:2.2!important;stroke-linecap:round!important;stroke-linejoin:round!important}.sc-facebook-quick-unsave svg path{fill:currentColor!important}.sc-facebook-quick-unsave svg line{stroke:#fff!important;stroke-width:2.8!important}" +
-        "#sc-facebook-story-dl{position:fixed;z-index:2147483647;display:flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:1.5px solid rgba(255,255,255,.8);border-radius:50%;background:rgba(37,99,235,.9);color:#fff;box-shadow:0 3px 12px rgba(0,0,0,.45);cursor:pointer;backdrop-filter:blur(8px)}#sc-facebook-story-dl:hover{background:rgba(29,78,216,1);transform:scale(1.1)}#sc-facebook-story-dl svg{width:19px;height:19px;fill:currentColor}",
+      ".sc-in.sc-facebook-quick-save{position:absolute;right:46px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
+        ".sc-in.sc-facebook-quick-unsave{color:var(--secondary-icon,currentColor)!important}" +
+        "#sc-facebook-story-dl{position:fixed;z-index:2147483647}",
     );
 
     scWatchDom(() => {
@@ -1534,13 +1573,10 @@ location.hostname.includes("facebook.com") &&
 // ARCHITECTURE.md before changing carousel resolution or file naming.
 location.hostname.includes('instagram.com') && (() => {
   const CLASS = 'ig-minimal-download';
-  const ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7Zm-14 9v2h14v-2H5Z"/></svg>';
-  const ALL_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6Zm16-4H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Zm-6 13-4-4h3V5h2v6h3l-4 4Z"/></svg>';
   // The S hotkey targets single-item buttons; "all" buttons are reached with Shift+S.
   const SINGLE = `.${CLASS}:not([data-kind="all"])`;
   const isCarousel = (scope) =>
     !!scope.querySelector('button[aria-label^="Go to slide"], button[aria-label="Next"], button[aria-label="Tiếp"]');
-  const ROUND_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/></svg>';
   // Like/Unlike icons: anchoring on the label (not the outline-heart path)
   // keeps the button on posts that are already liked.
   const LIKE_SVG = 'svg[aria-label="Like"],svg[aria-label="Unlike"],svg[aria-label="Thích"],svg[aria-label="Bỏ thích"]';
@@ -1872,22 +1908,11 @@ location.hostname.includes('instagram.com') && (() => {
     return button.closest('article, [role="dialog"]') || document.querySelector('[role="dialog"] article, article') || document;
   }
 
-  function setButtonState(button, state) {
-    const colors = { idle: !isFeedPage() || button.dataset.hotkeyTarget === 'true' ? '#0095f6' : '#fff', loading: '#f59e0b', done: '#22a06b', failed: '#ed4956' };
-    if (state === 'idle') delete button.dataset.state;
-    else button.dataset.state = state;
-    button.style.backgroundColor = 'transparent';
-    button.style.color = colors[state];
-    button.style.transform = state === 'loading' ? 'scale(.92)' : 'scale(1)';
-    button.title = state === 'loading' ? 'Downloading…' : state === 'done' ? 'Downloaded' : state === 'failed' ? 'Download failed' : button.dataset.kind === 'all' ? 'Download all media of this post (Shift+S)' : `Download ${button.dataset.kind}`;
-  }
-
   async function startDownload(button) {
-    if (!button || button.dataset.state === 'loading') return;
-    setButtonState(button, 'loading');
-    try {
-      // Do not retain a custom DOM object on the button: Tampermonkey crosses
-      // an isolated-world boundary for such properties. Resolve it at click time.
+    if (!button) return;
+    // Do not retain a custom DOM object on the button: Tampermonkey crosses
+    // an isolated-world boundary for such properties. Resolve it at click time.
+    await scRun(button, async () => {
       const scope = postScopeOf(button);
       if (button.dataset.kind === 'all') {
         const short = shortcodeFrom(scope);
@@ -1896,14 +1921,7 @@ location.hostname.includes('instagram.com') && (() => {
       } else {
         await save(await resolvePostOrReel(scope));
       }
-      setButtonState(button, 'done');
-    } catch (error) {
-      setButtonState(button, 'failed');
-      button.title = `Download failed: ${error.message}`;
-      console.error(SC_TAG, error);
-    } finally {
-      setTimeout(() => setButtonState(button, 'idle'), 1800);
-    }
+    });
   }
 
   // A button counts only when it is on screen and not covered by an overlay
@@ -1928,16 +1946,14 @@ location.hostname.includes('instagram.com') && (() => {
   }
 
   let indicatorFrame = 0;
+  // The button the S hotkey would download gets the accent colour.
   function refreshHotkeyIndicator() {
-    if (!isFeedPage() || indicatorFrame) return;
+    if (indicatorFrame) return;
     indicatorFrame = requestAnimationFrame(() => {
       indicatorFrame = 0;
       const target = nearestVisibleButton();
       document.querySelectorAll(SINGLE).forEach((button) => {
-        const isTarget = button === target;
-        button.dataset.hotkeyTarget = String(isTarget);
-        // Keep the loading / done / failed colours until the button resets.
-        if (!button.dataset.state) button.style.color = isTarget ? '#0095f6' : '#fff';
+        button.dataset.target = String(button === target);
       });
     });
   }
@@ -2016,12 +2032,11 @@ location.hostname.includes('instagram.com') && (() => {
 
   function addButton(container, kind) {
     if (!(container instanceof HTMLElement) || container.querySelector(`.${CLASS}[data-kind="${kind}"]`)) return;
-    const button = document.createElement('a');
-    button.className = CLASS;
+    const button = kind === 'all'
+      ? scButton('inline', 'stack', 'Tải cả bài (Shift+S)')
+      : scButton('inline', 'download', kind === 'reel' ? 'Tải reel này (S)' : 'Tải ảnh/video đang xem (S)');
+    button.classList.add(CLASS);
     button.dataset.kind = kind;
-    button.innerHTML = kind === 'all' ? ALL_ICON : ICON;
-    button.title = kind === 'all' ? 'Download all media of this post (Shift+S)' : `Download ${kind}`;
-    button.setAttribute('style', 'cursor:pointer;padding:7px;color:#0095f6;background:transparent;border-radius:8px;position:relative;display:inline-flex;z-index:999;line-height:0;transition:color .18s ease,transform .18s ease');
     button.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2146,34 +2161,17 @@ location.hostname.includes('instagram.com') && (() => {
     for (const item of parent.carousel_media || [parent]) await save(toDownload(item, parent));
   }
 
-  // Round buttons for the story viewer and grid tiles.
-  function makeRoundButton(className, title, run) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = className;
-    button.title = title;
-    button.innerHTML = ROUND_ICON;
+  // Overlay buttons for the story viewer and grid tiles.
+  function makeOverlayButton(icon, title, run) {
+    const button = scButton('overlay', icon, title);
     const stop = (e) => {
       e.preventDefault();
       e.stopPropagation();
     };
     ['pointerdown', 'mousedown', 'dblclick'].forEach((type) => button.addEventListener(type, stop, true));
-    button.addEventListener('click', async (e) => {
+    button.addEventListener('click', (e) => {
       stop(e);
-      if (button.dataset.state) return;
-      button.dataset.state = 'busy';
-      try {
-        await run();
-        button.textContent = '✓';
-      } catch (err) {
-        button.textContent = '×';
-        button.title = `Lỗi: ${err instanceof Error ? err.message : String(err)}`;
-        console.error(SC_TAG, 'Instagram download:', err);
-      }
-      setTimeout(() => {
-        button.innerHTML = ROUND_ICON;
-        delete button.dataset.state;
-      }, 2500);
+      scRun(button, run);
     }, true);
     return button;
   }
@@ -2182,7 +2180,7 @@ location.hostname.includes('instagram.com') && (() => {
   // its header; falls back to the CSS corner position when no media is shown.
   function placeStoryButton(button) {
     const r = storyMediaEl()?.getBoundingClientRect();
-    button.style.left = r ? `${Math.round(r.right - 50)}px` : '';
+    button.style.left = r ? `${Math.round(r.right - 44)}px` : '';
     button.style.top = r ? `${Math.round(r.top + 92)}px` : '';
     button.style.right = button.style.bottom = r ? 'auto' : '';
   }
@@ -2193,7 +2191,7 @@ location.hostname.includes('instagram.com') && (() => {
       return;
     }
     if (!button) {
-      button = makeRoundButton('', 'Tải story này (phím S)', async () => save(await resolveStory()));
+      button = makeOverlayButton('download', 'Tải story này (S)', async () => save(await resolveStory()));
       button.id = 'sc-ig-page-dl';
       document.body.append(button);
       // The story viewer animates between items without DOM-wide mutations.
@@ -2215,7 +2213,9 @@ location.hostname.includes('instagram.com') && (() => {
       a.dataset.scGrid = '1';
       if (getComputedStyle(a).position === 'static') a.style.position = 'relative';
       const route = match[1] === 'p' ? 'p' : 'reel';
-      a.append(makeRoundButton('sc-ig-dl', 'Tải toàn bộ media của bài này', () => downloadWholePost(match[2], route)));
+      const button = makeOverlayButton('download', 'Tải cả bài', () => downloadWholePost(match[2], route));
+      button.classList.add('sc-ig-grid');
+      a.append(button);
     });
   }
 
@@ -2244,8 +2244,9 @@ location.hostname.includes('instagram.com') && (() => {
   window.addEventListener('scroll', refreshHotkeyIndicator, { passive: true });
   window.addEventListener('resize', refreshHotkeyIndicator, { passive: true });
 
+  // Look comes from the shared kit; only placement is set here.
   GM_addStyle(
-    '.sc-ig-dl{position:absolute!important;left:8px!important;top:8px!important;z-index:2147483645!important;display:flex!important;align-items:center!important;justify-content:center!important;width:32px!important;height:32px!important;padding:0!important;border:1.5px solid rgba(255,255,255,.55)!important;border-radius:50%!important;background:rgba(0,0,0,.62)!important;color:#fff!important;cursor:pointer!important;backdrop-filter:blur(8px)!important;box-shadow:0 3px 12px rgba(0,0,0,.35)!important}.sc-ig-dl:hover{background:rgba(0,0,0,.86)!important;transform:scale(1.1)!important}.sc-ig-dl svg,#sc-ig-page-dl svg{width:18px;height:18px;fill:currentColor}.sc-ig-dl[data-state=busy],#sc-ig-page-dl[data-state=busy]{opacity:.55!important;cursor:wait!important}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646;display:flex;align-items:center;justify-content:center;width:38px;height:38px;padding:0;border:1.5px solid rgba(255,255,255,.8);border-radius:50%;background:rgba(219,39,119,.92);color:#fff;box-shadow:0 3px 12px rgba(0,0,0,.45);cursor:pointer}#sc-ig-page-dl:hover{background:#be185d;transform:scale(1.08)}',
+    '.sc-ov.sc-ig-grid{left:8px;top:8px}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646}',
   );
 
   scWatchDom(() => {
