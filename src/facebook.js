@@ -25,6 +25,14 @@ location.hostname.includes("facebook.com") &&
       photos.set(String(photo.id), { uri: image.uri, ownerId: photo.owner && photo.owner.id });
       if (photos.size > 3000) photos.delete(photos.keys().next().value);
     }
+    const mediasets = new Map(); // mediaset_token -> [fbid, ...] in post order
+    function rememberSet(attachment) {
+      const ids = (attachment.all_subattachments.nodes || [])
+        .map((node) => node && node.media && node.media.id)
+        .filter(Boolean)
+        .map(String);
+      if (ids.length) mediasets.set(attachment.mediaset_token, ids);
+    }
     function scanPayload(text) {
       if (typeof text !== "string") return;
       const video = /playable|video/i.test(text);
@@ -42,6 +50,7 @@ location.hostname.includes("facebook.com") &&
           if (Array.isArray(value)) stack.push(...value);
           else if (value && typeof value === "object") {
             if (photo && value.viewer_image) rememberPhoto(value);
+            if (photo && value.mediaset_token && value.all_subattachments) rememberSet(value);
             for (const [key, v] of Object.entries(value))
               if (typeof v === "string") {
                 if (video && /(?:playable|video|dash|manifest).*url/i.test(key)) rememberPlayable(v);
@@ -462,6 +471,64 @@ location.hostname.includes("facebook.com") &&
       if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
       await scSaveUrl(url, `${safeName(photoOwner(scope, photo))}_${safeName(fileNameOf(url))}`);
     }
+    const setTokenOf = (href) => {
+      try {
+        return new URL(href, location.href).searchParams.get("set");
+      } catch {
+        return null;
+      }
+    };
+    // All photos of a post, one after another; reports any it had no data for.
+    async function downloadSet(token, scope) {
+      scanPageData();
+      const ids = mediasets.get(token) || [];
+      let missing = 0;
+      for (const id of ids) {
+        const photo = photos.get(id);
+        if (!photo) {
+          missing++;
+          continue;
+        }
+        await scSaveUrl(photo.uri, `${safeName(photoOwner(scope, photo))}_${safeName(fileNameOf(photo.uri))}`);
+      }
+      if (missing) throw new Error(`Thiếu dữ liệu ${missing}/${ids.length} ảnh — cuộn lại bài viết rồi thử lại`);
+    }
+    // The photo set of a post: the set= token of its photo links, when the
+    // GraphQL data listed more than one photo for it.
+    function postSetOf(post) {
+      for (const link of post.querySelectorAll('a[href*="set="]')) {
+        const token = setTokenOf(link.href);
+        if (token && (mediasets.get(token) || []).length > 1) return token;
+      }
+      return null;
+    }
+    function setButton(token, scope, style) {
+      const count = (mediasets.get(token) || []).length;
+      const button = scButton(style, "stack", `Tải cả bộ ${count} ảnh`, { small: style === "inline" });
+      button.addEventListener(
+        "click",
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          scRun(button, () => downloadSet(token, scope));
+        },
+        true,
+      );
+      return button;
+    }
+    // Feed posts with several photos: a stack button next to quick save.
+    function decorateSets() {
+      document.querySelectorAll(".sc-facebook-quick-save:not([data-sc-set])").forEach((save) => {
+        const post = save.closest('[aria-posinset],[role="article"]');
+        const token = post && postSetOf(post);
+        if (!token) return;
+        save.dataset.scSet = "1";
+        const button = setButton(token, post, "inline");
+        button.classList.add("sc-facebook-quick-set");
+        save.parentElement.append(button);
+      });
+    }
+
     function photoButton(fbid, img, scope) {
       const button = scButton("overlay", "download", "Tải ảnh gốc");
       const stop = (e) => {
@@ -504,7 +571,10 @@ location.hostname.includes("facebook.com") &&
       const img =
         fbid &&
         largestFirst([...document.querySelectorAll('img[data-visualcompletion="media-vc-image"]')].filter(inViewport))[0];
-      if (!img) return void (button && button.remove());
+      if (!img) {
+        document.getElementById("sc-fb-photo-viewer-all")?.remove();
+        return void (button && button.remove());
+      }
       if (!button || button.dataset.fbid !== fbid) {
         if (button) button.remove();
         button = photoButton(fbid, img, img);
@@ -515,13 +585,27 @@ location.hostname.includes("facebook.com") &&
       const r = img.getBoundingClientRect();
       button.style.left = `${Math.round(Math.max(8, r.right - 44))}px`;
       button.style.top = `${Math.round(Math.max(8, r.top + 12))}px`;
+
+      const token = setTokenOf(location.href);
+      let all = document.getElementById("sc-fb-photo-viewer-all");
+      if (!token || (mediasets.get(token) || []).length < 2) return void (all && all.remove());
+      if (!all || all.dataset.token !== token) {
+        if (all) all.remove();
+        all = setButton(token, img, "overlay");
+        all.id = "sc-fb-photo-viewer-all";
+        all.dataset.token = token;
+        document.body.append(all);
+      }
+      all.style.left = `${Math.round(Math.max(8, r.right - 84))}px`;
+      all.style.top = button.style.top;
     }
 
     // Look comes from the shared kit; only placement and Facebook's icon colour here.
     GM_addStyle(
       ".sc-in.sc-facebook-quick-save{position:absolute;right:46px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
         ".sc-in.sc-facebook-quick-unsave{color:var(--secondary-icon,currentColor)!important}" +
-        "#sc-facebook-story-dl,#sc-fb-photo-viewer-dl{position:fixed;z-index:2147483647}" +
+        "#sc-facebook-story-dl,#sc-fb-photo-viewer-dl,#sc-fb-photo-viewer-all{position:fixed;z-index:2147483647}" +
+        ".sc-in.sc-facebook-quick-set{position:absolute;right:80px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
         ".sc-ov.sc-fb-photo-dl{right:8px;top:8px}",
     );
 
@@ -530,6 +614,7 @@ location.hostname.includes("facebook.com") &&
       decoratePhotos();
       syncViewerButton();
       decorateQuickSave();
+      decorateSets();
       decorateQuickUnsave();
       syncStoryButton();
     });
