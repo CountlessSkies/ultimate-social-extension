@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.19.1546
+// @version      2026.10.19.1555
 // @description  Facebook quick-save, Instagram tools and media download, Threads media tools.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -1560,6 +1560,11 @@ location.hostname.includes("facebook.com") &&
 location.hostname.includes('instagram.com') && (() => {
   const CLASS = 'ig-minimal-download';
   const ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M19 9h-4V3H9v6H5l7 7 7-7Zm-14 9v2h14v-2H5Z"/></svg>';
+  const ALL_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" aria-hidden="true"><path d="M4 6H2v14a2 2 0 0 0 2 2h14v-2H4V6Zm16-4H8a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Zm-6 13-4-4h3V5h2v6h3l-4 4Z"/></svg>';
+  // The S hotkey targets single-item buttons; "all" buttons are reached with Shift+S.
+  const SINGLE = `.${CLASS}:not([data-kind="all"])`;
+  const isCarousel = (scope) =>
+    !!scope.querySelector('button[aria-label^="Go to slide"], button[aria-label="Next"], button[aria-label="Tiếp"]');
   const ROUND_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a1 1 0 0 1 1 1v9.59l3.3-3.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-1.4 0l-5-5a1 1 0 1 1 1.4-1.42l3.3 3.3V4a1 1 0 0 1 1-1zM5 19h14a1 1 0 1 1 0 2H5a1 1 0 1 1 0-2z"/></svg>';
   // Like/Unlike icons: anchoring on the label (not the outline-heart path)
   // keeps the button on posts that are already liked.
@@ -1899,7 +1904,7 @@ location.hostname.includes('instagram.com') && (() => {
     button.style.backgroundColor = 'transparent';
     button.style.color = colors[state];
     button.style.transform = state === 'loading' ? 'scale(.92)' : 'scale(1)';
-    button.title = state === 'loading' ? 'Downloading…' : state === 'done' ? 'Downloaded' : state === 'failed' ? 'Download failed' : `Download ${button.dataset.kind}`;
+    button.title = state === 'loading' ? 'Downloading…' : state === 'done' ? 'Downloaded' : state === 'failed' ? 'Download failed' : button.dataset.kind === 'all' ? 'Download all media of this post (Shift+S)' : `Download ${button.dataset.kind}`;
   }
 
   async function startDownload(button) {
@@ -1908,7 +1913,14 @@ location.hostname.includes('instagram.com') && (() => {
     try {
       // Do not retain a custom DOM object on the button: Tampermonkey crosses
       // an isolated-world boundary for such properties. Resolve it at click time.
-      await save(await resolvePostOrReel(postScopeOf(button)));
+      const scope = postScopeOf(button);
+      if (button.dataset.kind === 'all') {
+        const short = shortcodeFrom(scope);
+        if (!short) throw new Error('Could not resolve post or reel code');
+        await downloadWholePost(short.code, short.route);
+      } else {
+        await save(await resolvePostOrReel(scope));
+      }
       setButtonState(button, 'done');
     } catch (error) {
       setButtonState(button, 'failed');
@@ -1929,7 +1941,7 @@ location.hostname.includes('instagram.com') && (() => {
   function nearestVisibleButton() {
     const viewportCenter = window.innerHeight / 2;
     const dialog = [...document.querySelectorAll('[role="dialog"]')].find(scIsVisible);
-    const pool = dialog ? dialog.querySelectorAll(`.${CLASS}`) : document.querySelectorAll(`.${CLASS}`);
+    const pool = (dialog || document).querySelectorAll(SINGLE);
     return [...pool]
       .map((button) => ({ button, rect: button.getBoundingClientRect() }))
       .filter(({ button, rect }) => rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < window.innerHeight && isUncovered(button, rect))
@@ -1946,7 +1958,7 @@ location.hostname.includes('instagram.com') && (() => {
     indicatorFrame = requestAnimationFrame(() => {
       indicatorFrame = 0;
       const target = nearestVisibleButton();
-      document.querySelectorAll(`.${CLASS}`).forEach((button) => {
+      document.querySelectorAll(SINGLE).forEach((button) => {
         const isTarget = button === target;
         button.dataset.hotkeyTarget = String(isTarget);
         // Keep the loading / done / failed colours until the button resets.
@@ -2032,8 +2044,8 @@ location.hostname.includes('instagram.com') && (() => {
     const button = document.createElement('a');
     button.className = CLASS;
     button.dataset.kind = kind;
-    button.innerHTML = ICON;
-    button.title = `Download ${kind}`;
+    button.innerHTML = kind === 'all' ? ALL_ICON : ICON;
+    button.title = kind === 'all' ? 'Download all media of this post (Shift+S)' : `Download ${kind}`;
     button.setAttribute('style', 'cursor:pointer;padding:7px;color:#0095f6;background:transparent;border-radius:8px;position:relative;display:inline-flex;z-index:999;line-height:0;transition:color .18s ease,transform .18s ease');
     button.addEventListener('click', async (event) => {
       event.preventDefault();
@@ -2051,17 +2063,21 @@ location.hostname.includes('instagram.com') && (() => {
 
   function scanPosts() {
     document.querySelectorAll('article').forEach((article) => {
-      if (article.querySelector(`.${CLASS}`)) return;
-      const row = actionRowOf(article);
-      if (row) addButton(row, 'post');
+      const row = article.querySelector(`.${CLASS}`)?.parentElement || actionRowOf(article);
+      if (!row) return;
+      addButton(row, 'post');
+      // Carousels also get a "download the whole post" button.
+      if (isCarousel(article)) addButton(row, 'all');
     });
     if (location.pathname.match(/\/(?:p|reel)\//)) {
       // One button per post page: skip when the article above already has one.
       const page = document.querySelector('[role="dialog"]') || document;
-      if (page.querySelector(`.${CLASS}`)) return;
+      const existing = page.querySelector(`.${CLASS}`);
       const reply = document.querySelector('path[d="M20.656 17.008a9.993 9.993 0 1 0-3.59 3.615L22 22Z"]');
-      const container = document.querySelector('div[role="presentation"] section') || parentAt(reply, 5);
-      if (container) addButton(container, 'post');
+      const container = existing?.parentElement || document.querySelector('div[role="presentation"] section') || parentAt(reply, 5);
+      if (!container) return;
+      if (!existing) addButton(container, 'post');
+      if (isCarousel(page)) addButton(container, 'all');
     }
   }
 
@@ -2234,7 +2250,8 @@ location.hostname.includes('instagram.com') && (() => {
   function interceptDownloadHotkey(event) {
     if (event.key.toLowerCase() !== 's' || event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
     const story = location.pathname.startsWith('/stories/') && document.getElementById('sc-ig-page-dl');
-    const button = story || nearestVisibleButton();
+    const target = story || nearestVisibleButton();
+    const button = !story && event.shiftKey ? target?.parentElement?.querySelector(`.${CLASS}[data-kind="all"]`) : target;
     if (!button) return;
     event.preventDefault();
     event.stopImmediatePropagation();
