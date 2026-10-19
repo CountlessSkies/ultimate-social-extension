@@ -20,7 +20,11 @@
 // @connect      threads.com
 // @connect      cdninstagram.com
 // @connect      fbcdn.net
-// @require      file:///D:/AgentWorks/ultimate-social-extension/dist/social-all-in-one.bundle.js
+// @require      file:///D:/AgentWorks/ultimate-social-extension/src/shared.js
+// @require      file:///D:/AgentWorks/ultimate-social-extension/src/core.js
+// @require      file:///D:/AgentWorks/ultimate-social-extension/src/facebook.js
+// @require      file:///D:/AgentWorks/ultimate-social-extension/src/instagram.js
 // ==/UserScript==
 
-// The implementation is loaded from the workspace file above.
+// The implementation is loaded straight from the workspace sources above, in
+// the same order as scripts/build-userscript.mjs: edit src/ and reload the tab.

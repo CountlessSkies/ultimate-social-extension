@@ -1,0 +1,8 @@
+#!/bin/sh
+# Rebuild dist/ when a commit changes src/, so the version GitHub serves moves
+# forward and Tampermonkey on other machines picks the update up.
+# Enable once per clone: git config core.hooksPath .githooks
+if git diff --cached --name-only | grep -q '^src/'; then
+  node scripts/build-userscript.mjs || exit 1
+  git add dist/social-all-in-one.bundle.js dist/social-all-in-one.user.js dist/social-all-in-one.meta.js
+fi

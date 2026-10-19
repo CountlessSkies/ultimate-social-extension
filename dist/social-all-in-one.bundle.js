@@ -1,12 +1,13 @@
-// Helpers shared by every module: Tampermonkey runs the whole bundle as one
-// script, so these top-level declarations are visible to the files after it.
+// Helpers shared by every module. They are top-level `var`/function
+// declarations so the files after this one see them both in the built bundle
+// (one script) and when the local loader @requires each src/ file separately.
 
-const SC_TAG = "[Social All-in-One]";
+var SC_TAG = "[Social All-in-One]";
 
 // One MutationObserver for every module. It throttles instead of debouncing:
 // pages with a playing video mutate continuously, and a debounce that restarts
 // on every mutation would never fire there.
-const scWatchDom = (() => {
+var scWatchDom = (() => {
   const callbacks = [];
   let timer = 0;
   let last = 0;
@@ -37,7 +38,7 @@ const scWatchDom = (() => {
   };
 })();
 
-const scSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var scSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Polls `find` until it returns something truthy, or resolves null on timeout.
 async function scWaitFor(find, { timeout = 3000, interval = 150 } = {}) {
@@ -50,9 +51,9 @@ async function scWaitFor(find, { timeout = 3000, interval = 150 } = {}) {
   }
 }
 
-const scIsVisible = (el) => !!el && el.getClientRects().length > 0;
-const scText = (el) => (el.textContent || "").trim().replace(/\s+/g, " ").toLowerCase();
-const scIsTyping = (t) =>
+var scIsVisible = (el) => !!el && el.getClientRects().length > 0;
+var scText = (el) => (el.textContent || "").trim().replace(/\s+/g, " ").toLowerCase();
+var scIsTyping = (t) =>
   t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || !!(t && t.isContentEditable);
 
 // Downloads `url` under `name`. The bytes are fetched first and saved through a
