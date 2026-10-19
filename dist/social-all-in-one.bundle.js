@@ -1269,7 +1269,7 @@ GM_addStyle(`
   })();
 })();
 
-// Facebook: quick save on posts, quick unsave on /saved, Story and photo download.
+// Facebook: quick save on posts, quick unsave on /saved, Story, photo and video download.
 location.hostname.includes("facebook.com") &&
   (() => {
     "use strict";
@@ -1304,28 +1304,65 @@ location.hostname.includes("facebook.com") &&
         .map(String);
       if (ids.length) mediasets.set(attachment.mediaset_token, ids);
     }
+    // Videos carry progressive_urls (SD and HD MP4 with sound) and a DASH
+    // manifest whose picture-only streams go higher (e.g. 1080p over a 720p
+    // HD). Downloads take the highest-bitrate DASH picture stream (no sound),
+    // falling back to HD then SD, and are named by the video id, which is
+    // unique and stable (the /reel/<id>, /videos/<id> number).
+    const videos = new Map(); // video id -> { hd, sd, dash, ownerId }
+    const storyVideos = new Map(); // story card id (last URL segment) -> video id
+    function rememberVideo(video, card) {
+      const pick = (quality) =>
+        (video.progressive_urls.find((p) => p && p.metadata && p.metadata.quality === quality) || {}).progressive_url;
+      const id = String(video.id);
+      const dash =
+        (Array.isArray(video.dash_manifests) && video.dash_manifests[0] && video.dash_manifests[0].manifest_xml) || null;
+      const entry = { hd: pick("HD"), sd: pick("SD"), dash, ownerId: video.owner && video.owner.id };
+      if (!entry.hd && !entry.sd && !dash) return;
+      videos.set(id, entry);
+      if (card) storyVideos.set(card, id);
+      if (videos.size > 1500) videos.delete(videos.keys().next().value);
+    }
+    // The manifest is only parsed when a download starts.
+    function bestVideoUrl(entry) {
+      if (entry.dash)
+        try {
+          const doc = new DOMParser().parseFromString(entry.dash, "text/xml");
+          const best = [...doc.querySelectorAll("Representation")]
+            .filter((r) => /video/.test(r.getAttribute("mimeType") || r.parentElement.getAttribute("mimeType") || ""))
+            .sort((a, b) => (+b.getAttribute("bandwidth") || 0) - (+a.getAttribute("bandwidth") || 0))[0];
+          const url = best && best.querySelector("BaseURL")?.textContent.trim();
+          if (url && /^https?:/.test(url)) return url;
+        } catch {}
+      return entry.hd || entry.sd;
+    }
+    // Story cards are nodes whose id is the base64 "S:_ISC:…" in the story URL.
+    const isStoryCardId = (id) => typeof id === "string" && id.startsWith("UzpfSVND");
     function scanPayload(text) {
       if (typeof text !== "string") return;
       const video = /playable|video/i.test(text);
       const photo = text.includes('"viewer_image"');
-      if (!video && !photo) return;
+      const progressive = text.includes('"progressive_urls"');
+      if (!video && !photo && !progressive) return;
       for (const line of text.replace(/^for \(;;\);/, "").split("\n")) {
         let stack;
         try {
-          stack = [JSON.parse(line)];
+          stack = [[JSON.parse(line), null]];
         } catch {
           continue;
         }
-        for (let n = 0; stack.length && n++ < 2e5; ) {
-          const value = stack.pop();
-          if (Array.isArray(value)) stack.push(...value);
+        for (let n = 0; stack.length && n++ < 4e5; ) {
+          const [value, card] = stack.pop();
+          if (Array.isArray(value)) value.forEach((x) => x && typeof x === "object" && stack.push([x, card]));
           else if (value && typeof value === "object") {
+            const here = isStoryCardId(value.id) ? value.id : card;
             if (photo && value.viewer_image) rememberPhoto(value);
             if (photo && value.mediaset_token && value.all_subattachments) rememberSet(value);
+            if (progressive && Array.isArray(value.progressive_urls) && value.id) rememberVideo(value, here);
             for (const [key, v] of Object.entries(value))
               if (typeof v === "string") {
                 if (video && /(?:playable|video|dash|manifest).*url/i.test(key)) rememberPlayable(v);
-              } else if (v && typeof v === "object") stack.push(v);
+              } else if (v && typeof v === "object") stack.push([v, here]);
           }
         }
       }
@@ -1334,7 +1371,7 @@ location.hostname.includes("facebook.com") &&
     function scanPageData() {
       document.querySelectorAll('script[type="application/json"]:not([data-sc-scanned])').forEach((script) => {
         script.dataset.scScanned = "1";
-        if (script.textContent.includes('"viewer_image"')) scanPayload(script.textContent);
+        if (/"viewer_image"|"progressive_urls"/.test(script.textContent)) scanPayload(script.textContent);
       });
     }
     (() => {
@@ -1609,6 +1646,13 @@ location.hostname.includes("facebook.com") &&
     // (MSE playback) is skipped in favour of the real CDN URL.
     function storyMedia() {
       const { player, video, image } = currentStory();
+      // The card in the URL maps to its video in the GraphQL data (also for
+      // photo stories Facebook turned into a video, e.g. with music).
+      scanPageData();
+      const card = location.pathname.split("/").filter(Boolean).at(-1);
+      const videoId = storyVideos.get(card);
+      const known = videos.get(videoId);
+      if (known) return { url: bestVideoUrl(known), ext: "mp4", box: player || video || image, videoId };
       if (!player && !video) {
         const url = httpUrl(image && (image.currentSrc || image.src));
         return url && { url, ext: (url.match(/\.(jpe?g|png|webp)(?:[?#]|$)/i) || [])[1] || "jpg", box: image };
@@ -1628,8 +1672,8 @@ location.hostname.includes("facebook.com") &&
       return url && { url, ext: "mp4", box: player || video };
     }
 
-    // <username>_<story id>.<ext>
-    function storyFilename(ext, box) {
+    // <username or profile id>_<video id>.mp4 for videos, _<original file name> for photos
+    function storyFilename(url, ext, box, videoId) {
       const skip = new Set(["stories", "profile.php", "l.php", "watch", "reel", "home.php", "groups", "marketplace", "gaming"]);
       let username;
       if (box) {
@@ -1655,13 +1699,14 @@ location.hostname.includes("facebook.com") &&
       try {
         cardId = (atob(last).match(/\d{6,}/) || [])[0];
       } catch {}
-      return `${username || bucket || "unknown"}_${cardId || "media"}.${ext}`;
+      const name = videoId ? `${videoId}.mp4` : fileNameOf(url);
+      return `${safeName(username || bucket || "unknown")}_${safeName(/\.[a-z0-9]{2,5}$/i.test(name) ? name : `${cardId || "media"}.${ext}`)}`;
     }
 
     async function downloadStory() {
       const media = storyMedia();
       if (!media) throw new Error("Chưa lấy được link Story");
-      await scSaveUrl(media.url, storyFilename(media.ext, media.box));
+      await scSaveUrl(media.url, storyFilename(media.url, media.ext, media.box, media.videoId));
     }
 
     function syncStoryButton() {
@@ -1723,7 +1768,7 @@ location.hostname.includes("facebook.com") &&
     // Who posted the photo: their username, else their numeric profile id (from
     // a profile.php?id= link or the photo's GraphQL owner), else the photo's
     // fbid. Every header link is checked: in groups the first one is the group.
-    function photoOwner(scope, fbid) {
+    function mediaOwner(scope, fbid, ownerId = photos.get(fbid)?.ownerId) {
       const post = scope && scope.closest('[aria-posinset],[role="article"]');
       const names = [
         ...(post ? post.querySelectorAll("h2 a[href], h3 a[href], h4 a[href], strong a[href]") : []),
@@ -1732,13 +1777,7 @@ location.hostname.includes("facebook.com") &&
       ]
         .map((a) => profileNameOf(a.href))
         .filter(Boolean);
-      const photo = photos.get(fbid);
-      return (
-        names.find((n) => !/^\d+$/.test(n)) ||
-        names.find((n) => /^\d+$/.test(n)) ||
-        (photo && photo.ownerId) ||
-        fbid
-      );
+      return names.find((n) => !/^\d+$/.test(n)) || names.find((n) => /^\d+$/.test(n)) || ownerId || fbid;
     }
     // Downloads the large viewer copy when known, otherwise the copy on screen.
     async function downloadPhoto(fbid, img, scope) {
@@ -1746,7 +1785,7 @@ location.hostname.includes("facebook.com") &&
       const photo = photos.get(fbid);
       const url = (photo && photo.uri) || img.currentSrc || img.src;
       if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
-      await scSaveUrl(url, `${safeName(photoOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
+      await scSaveUrl(url, `${safeName(mediaOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
     }
     const setTokenOf = (href) => {
       try {
@@ -1766,7 +1805,7 @@ location.hostname.includes("facebook.com") &&
           missing++;
           continue;
         }
-        await scSaveUrl(photo.uri, `${safeName(photoOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
+        await scSaveUrl(photo.uri, `${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
       }
       if (missing) throw new Error(`Thiếu dữ liệu ${missing}/${ids.length} ảnh — cuộn lại bài viết rồi thử lại`);
     }
@@ -1877,18 +1916,72 @@ location.hostname.includes("facebook.com") &&
       all.style.top = button.style.top;
     }
 
+    // ---- Video download (feed, reels, watch) ----
+    const videoIdFromUrl = () =>
+      (location.pathname.match(/\/(?:reel|videos)\/(?:[^/]+\/)?(\d{6,})/) || [])[1] || new URLSearchParams(location.search).get("v");
+    // The video's id: its data-video-id, else the nearest reel/video/watch link
+    // inside its own post (stops at a container holding other videos), else the
+    // page URL (/reel/<id>, /videos/<id>, watch?v=<id>).
+    function videoIdOf(video) {
+      const own = video.closest("[data-video-id]")?.getAttribute("data-video-id");
+      if (own && /^\d+$/.test(own)) return own;
+      let el = video.parentElement;
+      for (let i = 0; el && i < 14 && el.querySelectorAll("video").length < 2; i++, el = el.parentElement)
+        for (const a of el.querySelectorAll('a[href*="/reel/"],a[href*="/videos/"],a[href*="watch/?v="],a[href*="watch?v="]')) {
+          const m = a.href.match(/\/reel\/(\d+)|\/videos\/(?:[^/?]+\/)?(\d+)|[?&]v=(\d+)/);
+          if (m) return m[1] || m[2] || m[3];
+        }
+      return videoIdFromUrl();
+    }
+    async function downloadVideo(video) {
+      scanPageData();
+      const id = videoIdOf(video);
+      if (!id) throw new Error("Không tìm được ID video");
+      const data = videos.get(id);
+      const url = data && bestVideoUrl(data);
+      if (!url) throw new Error("Chưa có dữ liệu video này — cuộn lại hoặc tải lại trang");
+      await scSaveUrl(url, `${safeName(mediaOwner(video, id, data.ownerId))}_${id}.mp4`);
+    }
+    function decorateVideos() {
+      if (isStoryPage()) return;
+      document.querySelectorAll("video:not([data-sc-video])").forEach((video) => {
+        const r = video.getBoundingClientRect();
+        const host = video.parentElement;
+        if (!host || r.width < 200 || r.height < 150) return;
+        video.dataset.scVideo = "1";
+        if (getComputedStyle(host).position === "static") host.style.position = "relative";
+        const button = scButton("overlay", "download", "Tải video (nét nhất, không tiếng)");
+        button.classList.add("sc-fb-video-dl");
+        const stop = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        };
+        ["pointerdown", "mousedown", "mouseup", "dblclick"].forEach((type) => button.addEventListener(type, stop, true));
+        button.addEventListener(
+          "click",
+          (e) => {
+            stop(e);
+            scRun(button, () => downloadVideo(video));
+          },
+          true,
+        );
+        host.append(button);
+      });
+    }
+
     // Look comes from the shared kit; only placement and Facebook's icon colour here.
     GM_addStyle(
       ".sc-in.sc-facebook-quick-save{position:absolute;right:46px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
         ".sc-in.sc-facebook-quick-unsave{color:var(--secondary-icon,currentColor)!important}" +
         "#sc-facebook-story-dl,#sc-fb-photo-viewer-dl,#sc-fb-photo-viewer-all{position:fixed;z-index:2147483647}" +
         ".sc-in.sc-facebook-quick-set{position:absolute;right:80px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
-        ".sc-ov.sc-fb-photo-dl{right:8px;top:8px}",
+        ".sc-ov.sc-fb-photo-dl,.sc-ov.sc-fb-video-dl{right:8px;top:8px}",
     );
 
     scWatchDom(() => {
       scanPageData();
       decoratePhotos();
+      decorateVideos();
       syncViewerButton();
       decorateQuickSave();
       decorateSets();
