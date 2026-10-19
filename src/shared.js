@@ -191,3 +191,20 @@ GM_addStyle(`
 .sc-ov[data-state=loading] .sc-icon,.sc-in[data-state=loading] .sc-icon{animation:sc-spin .8s linear infinite}
 @keyframes sc-spin{to{transform:rotate(360deg)}}
 `);
+
+// The highest-bitrate picture stream of a DASH manifest (Facebook, Instagram
+// and Threads all ship one). It has no sound, but it is the sharpest copy:
+// the progressive files with sound stop at 720p. Null when there is none.
+function scBestDashVideo(xml) {
+  if (typeof xml !== "string" || !xml) return null;
+  try {
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    const best = [...doc.querySelectorAll("Representation")]
+      .filter((r) => /video/.test(r.getAttribute("mimeType") || r.parentElement.getAttribute("mimeType") || ""))
+      .sort((a, b) => (+b.getAttribute("bandwidth") || 0) - (+a.getAttribute("bandwidth") || 0))[0];
+    const url = best && best.querySelector("BaseURL")?.textContent.trim();
+    return url && /^https?:/.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}

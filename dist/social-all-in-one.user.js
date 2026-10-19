@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.19.1749
+// @version      2026.10.19.1757
 // @description  Facebook quick-save, Instagram tools and media download, Threads media tools.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -218,6 +218,23 @@ GM_addStyle(`
 @keyframes sc-spin{to{transform:rotate(360deg)}}
 `);
 
+// The highest-bitrate picture stream of a DASH manifest (Facebook, Instagram
+// and Threads all ship one). It has no sound, but it is the sharpest copy:
+// the progressive files with sound stop at 720p. Null when there is none.
+function scBestDashVideo(xml) {
+  if (typeof xml !== "string" || !xml) return null;
+  try {
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    const best = [...doc.querySelectorAll("Representation")]
+      .filter((r) => /video/.test(r.getAttribute("mimeType") || r.parentElement.getAttribute("mimeType") || ""))
+      .sort((a, b) => (+b.getAttribute("bandwidth") || 0) - (+a.getAttribute("bandwidth") || 0))[0];
+    const url = best && best.querySelector("BaseURL")?.textContent.trim();
+    return url && /^https?:/.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 !(function () {
   "use strict";
   const t = "sc:ig-results";
@@ -424,7 +441,7 @@ GM_addStyle(`
             n.url
             ? [
                 {
-                  url: t.video_versions[0].url,
+                  url: scBestDashVideo(t.video_dash_manifest) || t.video_versions[0].url,
                   kind: "video",
                   id: t.pk,
                   poster: t.image_versions2?.candidates?.[0]?.url,
@@ -720,8 +737,10 @@ GM_addStyle(`
   function rememberThreadsPost(p) {
     const items = (p.carousel_media && p.carousel_media.length ? p.carousel_media : [p])
       .map((c) => {
-        const video = largestUrl(c.video_versions);
-        return video ? { url: video, kind: "video" } : { url: largestUrl(c.image_versions2 && c.image_versions2.candidates), kind: "image" };
+        // Sharpest DASH picture stream (no sound) before the 720p video_versions.
+        const video = scBestDashVideo(c.video_dash_manifest) || largestUrl(c.video_versions);
+        const cover = largestUrl(c.image_versions2 && c.image_versions2.candidates);
+        return video ? { url: video, kind: "video", poster: cover, id: c.pk } : { url: cover, kind: "image", id: c.pk };
       })
       .filter((item) => item.url);
     if (items.length) threadsPosts.set(p.code, { user: p.user && p.user.username, items });
@@ -1043,7 +1062,7 @@ GM_addStyle(`
                                     : t.match(/\/(?:post|p)\/([^/?#]+)/))
                                   ? void 0
                                   : n[1];
-                            if (o) return h(o);
+                            if (o) return o;
                           }
                           const a =
                             null ==
@@ -1052,10 +1071,13 @@ GM_addStyle(`
                             ))
                               ? void 0
                               : o[1];
-                          return a ? h(a) : null;
+                          return a || null;
                         })(t);
                       if (!n) throw new Error("Không tìm được mã bài Threads.");
-                      const o = await m(n),
+                      // Prefer what the page loaded (it carries the DASH
+                      // manifest); the GraphQL replay answers without it.
+                      scanThreadsPageData();
+                      const o = threadsPosts.get(n)?.items || (await m(n)),
                         videos = o.filter((t) => "video" === t.kind),
                         fileOf = (u) => {
                           try {
@@ -1115,7 +1137,7 @@ GM_addStyle(`
                         );
                       await f(
                         i,
-                        `threads_${l}_${(null == a ? void 0 : a.id) || n}.mp4`,
+                        `threads_${l}_${(null == a ? void 0 : a.id) || h(n)}.mp4`,
                       );
                     }
                     scSetState(r, "done");
@@ -1355,18 +1377,7 @@ location.hostname.includes("facebook.com") &&
       if (videos.size > 1500) videos.delete(videos.keys().next().value);
     }
     // The manifest is only parsed when a download starts.
-    function bestVideoUrl(entry) {
-      if (entry.dash)
-        try {
-          const doc = new DOMParser().parseFromString(entry.dash, "text/xml");
-          const best = [...doc.querySelectorAll("Representation")]
-            .filter((r) => /video/.test(r.getAttribute("mimeType") || r.parentElement.getAttribute("mimeType") || ""))
-            .sort((a, b) => (+b.getAttribute("bandwidth") || 0) - (+a.getAttribute("bandwidth") || 0))[0];
-          const url = best && best.querySelector("BaseURL")?.textContent.trim();
-          if (url && /^https?:/.test(url)) return url;
-        } catch {}
-      return entry.hd || entry.sd;
-    }
+    const bestVideoUrl = (entry) => scBestDashVideo(entry.dash) || entry.hd || entry.sd;
     // Story cards are nodes whose id is the base64 "S:_ISC:…" in the story URL.
     const isStoryCardId = (id) => typeof id === "string" && id.startsWith("UzpfSVND");
     function scanPayload(text) {
@@ -2157,8 +2168,11 @@ location.hostname.includes('instagram.com') && (() => {
     }
   }
 
+  // Videos take the sharpest DASH picture stream (no sound; video_versions
+  // with sound stop at 720p), falling back to the largest video_versions.
   function toDownload(item, parent, renderedUrl = '') {
-    const video = largestCandidate(item.video_versions);
+    const dash = scBestDashVideo(item.video_dash_manifest);
+    const video = dash ? { url: dash } : largestCandidate(item.video_versions);
     const image = largestCandidate(item.image_versions2?.candidates);
     const source = video || image;
     if (!source?.url) throw new Error('No downloadable media URL');

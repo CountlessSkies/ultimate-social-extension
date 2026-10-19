@@ -58,18 +58,7 @@ location.hostname.includes("facebook.com") &&
       if (videos.size > 1500) videos.delete(videos.keys().next().value);
     }
     // The manifest is only parsed when a download starts.
-    function bestVideoUrl(entry) {
-      if (entry.dash)
-        try {
-          const doc = new DOMParser().parseFromString(entry.dash, "text/xml");
-          const best = [...doc.querySelectorAll("Representation")]
-            .filter((r) => /video/.test(r.getAttribute("mimeType") || r.parentElement.getAttribute("mimeType") || ""))
-            .sort((a, b) => (+b.getAttribute("bandwidth") || 0) - (+a.getAttribute("bandwidth") || 0))[0];
-          const url = best && best.querySelector("BaseURL")?.textContent.trim();
-          if (url && /^https?:/.test(url)) return url;
-        } catch {}
-      return entry.hd || entry.sd;
-    }
+    const bestVideoUrl = (entry) => scBestDashVideo(entry.dash) || entry.hd || entry.sd;
     // Story cards are nodes whose id is the base64 "S:_ISC:…" in the story URL.
     const isStoryCardId = (id) => typeof id === "string" && id.startsWith("UzpfSVND");
     function scanPayload(text) {

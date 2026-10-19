@@ -204,7 +204,7 @@
             n.url
             ? [
                 {
-                  url: t.video_versions[0].url,
+                  url: scBestDashVideo(t.video_dash_manifest) || t.video_versions[0].url,
                   kind: "video",
                   id: t.pk,
                   poster: t.image_versions2?.candidates?.[0]?.url,
@@ -500,8 +500,10 @@
   function rememberThreadsPost(p) {
     const items = (p.carousel_media && p.carousel_media.length ? p.carousel_media : [p])
       .map((c) => {
-        const video = largestUrl(c.video_versions);
-        return video ? { url: video, kind: "video" } : { url: largestUrl(c.image_versions2 && c.image_versions2.candidates), kind: "image" };
+        // Sharpest DASH picture stream (no sound) before the 720p video_versions.
+        const video = scBestDashVideo(c.video_dash_manifest) || largestUrl(c.video_versions);
+        const cover = largestUrl(c.image_versions2 && c.image_versions2.candidates);
+        return video ? { url: video, kind: "video", poster: cover, id: c.pk } : { url: cover, kind: "image", id: c.pk };
       })
       .filter((item) => item.url);
     if (items.length) threadsPosts.set(p.code, { user: p.user && p.user.username, items });
@@ -823,7 +825,7 @@
                                     : t.match(/\/(?:post|p)\/([^/?#]+)/))
                                   ? void 0
                                   : n[1];
-                            if (o) return h(o);
+                            if (o) return o;
                           }
                           const a =
                             null ==
@@ -832,10 +834,13 @@
                             ))
                               ? void 0
                               : o[1];
-                          return a ? h(a) : null;
+                          return a || null;
                         })(t);
                       if (!n) throw new Error("Không tìm được mã bài Threads.");
-                      const o = await m(n),
+                      // Prefer what the page loaded (it carries the DASH
+                      // manifest); the GraphQL replay answers without it.
+                      scanThreadsPageData();
+                      const o = threadsPosts.get(n)?.items || (await m(n)),
                         videos = o.filter((t) => "video" === t.kind),
                         fileOf = (u) => {
                           try {
@@ -895,7 +900,7 @@
                         );
                       await f(
                         i,
-                        `threads_${l}_${(null == a ? void 0 : a.id) || n}.mp4`,
+                        `threads_${l}_${(null == a ? void 0 : a.id) || h(n)}.mp4`,
                       );
                     }
                     scSetState(r, "done");

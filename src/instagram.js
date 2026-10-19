@@ -139,8 +139,11 @@ location.hostname.includes('instagram.com') && (() => {
     }
   }
 
+  // Videos take the sharpest DASH picture stream (no sound; video_versions
+  // with sound stop at 720p), falling back to the largest video_versions.
   function toDownload(item, parent, renderedUrl = '') {
-    const video = largestCandidate(item.video_versions);
+    const dash = scBestDashVideo(item.video_dash_manifest);
+    const video = dash ? { url: dash } : largestCandidate(item.video_versions);
     const image = largestCandidate(item.image_versions2?.candidates);
     const source = video || image;
     if (!source?.url) throw new Error('No downloadable media URL');
