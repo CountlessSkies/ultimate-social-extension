@@ -2512,12 +2512,14 @@ location.hostname.includes('instagram.com') && (() => {
       : 'button[aria-label="Previous"], button[aria-label="Prev"], button[aria-label="Go back"], button[aria-label="Quay lại"]';
     let button = pickCarouselControl([...scope.querySelectorAll(semanticSelector)], side);
     if (!button) {
-      const label = isNext ? 'next' : 'previous';
+      // Only buttons labelled for that direction, never this script's own: on
+      // the first slide there is no back control, and "any button that is not
+      // Next" used to hit the download button in the action row.
+      const words = isNext ? ['next', 'tiếp'] : ['previous', 'prev', 'back', 'quay lại', 'trước'];
       const candidates = [...scope.querySelectorAll('button')].filter((element) => {
-        const aria = (element.getAttribute('aria-label') || '').toLowerCase();
-        const title = (element.getAttribute('title') || '').toLowerCase();
-        if (isNext) return aria.includes(label) || title.includes(label);
-        return !(aria.includes('next') || title.includes('next'));
+        if (element.matches('.sc-in, .sc-ov') || element.closest(`.${CLASS}`)) return false;
+        const label = `${element.getAttribute('aria-label') || ''} ${element.getAttribute('title') || ''}`.toLowerCase();
+        return words.some((word) => label.includes(word));
       });
       button = pickCarouselControl(candidates, side);
     }
