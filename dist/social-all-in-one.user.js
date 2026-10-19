@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.19.1622
+// @version      2026.10.19.1653
 // @description  Facebook quick-save, Instagram tools and media download, Threads media tools.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -1191,12 +1191,12 @@ GM_addStyle(`
   })();
 })();
 
-// Facebook: quick save on posts, quick unsave on /saved, Story download.
+// Facebook: quick save on posts, quick unsave on /saved, Story and photo download.
 location.hostname.includes("facebook.com") &&
   (() => {
     "use strict";
 
-    // ---- Network hook: remember playable video URLs from GraphQL responses ----
+    // ---- Network hook: remember playable video URLs and photos from GraphQL ----
     // Facebook answers GraphQL/ajax calls with newline-separated JSON, sometimes
     // behind a `for (;;);` guard, so each line is parsed on its own. Only those
     // endpoints are read; other responses (media, streams) are left alone.
@@ -1208,8 +1208,21 @@ location.hostname.includes("facebook.com") &&
       sniffed.push({ url, href: location.href, time: Date.now() });
       if (sniffed.length > 50) sniffed.splice(0, sniffed.length - 50);
     }
+    // Photo objects carry "image" (the feed-sized copy) and "viewer_image" (the
+    // large copy the photo viewer shows, same original file name), keyed by the
+    // fbid that photo links use.
+    const photos = new Map(); // fbid -> { uri, ownerId }
+    function rememberPhoto(photo) {
+      const image = photo.viewer_image;
+      if (!image || typeof image.uri !== "string" || !photo.id) return;
+      photos.set(String(photo.id), { uri: image.uri, ownerId: photo.owner && photo.owner.id });
+      if (photos.size > 3000) photos.delete(photos.keys().next().value);
+    }
     function scanPayload(text) {
-      if (typeof text !== "string" || !/playable|video/i.test(text)) return;
+      if (typeof text !== "string") return;
+      const video = /playable|video/i.test(text);
+      const photo = text.includes('"viewer_image"');
+      if (!video && !photo) return;
       for (const line of text.replace(/^for \(;;\);/, "").split("\n")) {
         let stack;
         try {
@@ -1217,15 +1230,25 @@ location.hostname.includes("facebook.com") &&
         } catch {
           continue;
         }
-        for (let n = 0; stack.length && n++ < 2e4; ) {
+        for (let n = 0; stack.length && n++ < 2e5; ) {
           const value = stack.pop();
           if (Array.isArray(value)) stack.push(...value);
-          else if (value && typeof value === "object")
+          else if (value && typeof value === "object") {
+            if (photo && value.viewer_image) rememberPhoto(value);
             for (const [key, v] of Object.entries(value))
-              if (typeof v === "string" && /(?:playable|video|dash|manifest).*url/i.test(key)) rememberPlayable(v);
-              else if (v && typeof v === "object") stack.push(v);
+              if (typeof v === "string") {
+                if (video && /(?:playable|video|dash|manifest).*url/i.test(key)) rememberPlayable(v);
+              } else if (v && typeof v === "object") stack.push(v);
+          }
         }
       }
+    }
+    // Posts rendered with the first page load come as JSON in <script> tags.
+    function scanPageData() {
+      document.querySelectorAll('script[type="application/json"]:not([data-sc-scanned])').forEach((script) => {
+        script.dataset.scScanned = "1";
+        if (script.textContent.includes('"viewer_image"')) scanPayload(script.textContent);
+      });
     }
     (() => {
       const page = unsafeWindow;
@@ -1579,14 +1602,126 @@ location.hostname.includes("facebook.com") &&
       if (!button.dataset.state) button.title = button.dataset.label;
     }
 
+    // ---- Photo download ----
+    const photoIdOf = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        return url.searchParams.get("fbid") || (url.pathname.match(/\/photos\/(?:[^/]+\/)*?(\d{8,})/) || [])[1] || null;
+      } catch {
+        return null;
+      }
+    };
+    const safeName = (s) => String(s).replace(/[\\/:*?"<>|]/g, "_");
+    const fileNameOf = (url) => {
+      try {
+        return decodeURIComponent(new URL(url).pathname.split("/").pop()) || "photo.jpg";
+      } catch {
+        return "photo.jpg";
+      }
+    };
+    // Profile vanity name (or numeric id) from a facebook.com profile link.
+    const profileNameOf = (href) => {
+      try {
+        const url = new URL(href, location.href);
+        if (!url.hostname.endsWith("facebook.com")) return null;
+        const first = url.pathname.split("/").filter(Boolean)[0];
+        if (first === "profile.php") return url.searchParams.get("id");
+        if (!first || /^(photo|photo\.php|photos|groups|watch|reel|stories|events|pages|permalink\.php|story\.php|hashtag)$/.test(first))
+          return null;
+        return first;
+      } catch {
+        return null;
+      }
+    };
+    // The author: the post header link, or the profile/viewer page owner.
+    function photoOwner(scope, photo) {
+      const post = scope && scope.closest('[aria-posinset],[role="article"]');
+      const header = post && post.querySelector("h2 a[href], h3 a[href], h4 a[href], strong a[href]");
+      return (
+        (header && profileNameOf(header.href)) ||
+        profileNameOf(location.href) ||
+        [...document.querySelectorAll('[role="dialog"] h2 a[href], [role="complementary"] h2 a[href], [role="main"] h2 a[href]')]
+          .map((a) => profileNameOf(a.href))
+          .find(Boolean) ||
+        (photo && photo.ownerId) ||
+        "facebook"
+      );
+    }
+    // Downloads the large viewer copy when known, otherwise the copy on screen.
+    async function downloadPhoto(fbid, img, scope) {
+      scanPageData();
+      const photo = photos.get(fbid);
+      const url = (photo && photo.uri) || img.currentSrc || img.src;
+      if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
+      await scSaveUrl(url, `${safeName(photoOwner(scope, photo))}_${safeName(fileNameOf(url))}`);
+    }
+    function photoButton(fbid, img, scope) {
+      const button = scButton("overlay", "download", "Tải ảnh gốc");
+      const stop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      ["pointerdown", "mousedown", "mouseup", "dblclick"].forEach((type) => button.addEventListener(type, stop, true));
+      button.addEventListener(
+        "click",
+        (e) => {
+          stop(e);
+          scRun(button, () => downloadPhoto(fbid, img, scope));
+        },
+        true,
+      );
+      return button;
+    }
+
+    // Every photo link (feed, profile, albums) with a large enough image.
+    function decoratePhotos() {
+      document.querySelectorAll('a[href*="fbid="]:not([data-sc-photo]), a[href*="/photos/"]:not([data-sc-photo])').forEach((link) => {
+        const fbid = photoIdOf(link.href);
+        if (!fbid) return void (link.dataset.scPhoto = "0");
+        const img = link.querySelector("img");
+        if (!img) return;
+        const r = img.getBoundingClientRect();
+        if (r.width < 150 || r.height < 150) return;
+        link.dataset.scPhoto = "1";
+        if (getComputedStyle(link).position === "static") link.style.position = "relative";
+        const button = photoButton(fbid, img, link);
+        button.classList.add("sc-fb-photo-dl");
+        link.append(button);
+      });
+    }
+
+    // The photo viewer (/photo/?fbid=…, also opened as an overlay from the feed).
+    function syncViewerButton() {
+      let button = document.getElementById("sc-fb-photo-viewer-dl");
+      const fbid = photoIdOf(location.href);
+      const img =
+        fbid &&
+        largestFirst([...document.querySelectorAll('img[data-visualcompletion="media-vc-image"]')].filter(inViewport))[0];
+      if (!img) return void (button && button.remove());
+      if (!button || button.dataset.fbid !== fbid) {
+        if (button) button.remove();
+        button = photoButton(fbid, img, img);
+        button.id = "sc-fb-photo-viewer-dl";
+        button.dataset.fbid = fbid;
+        document.body.append(button);
+      }
+      const r = img.getBoundingClientRect();
+      button.style.left = `${Math.round(Math.max(8, r.right - 44))}px`;
+      button.style.top = `${Math.round(Math.max(8, r.top + 12))}px`;
+    }
+
     // Look comes from the shared kit; only placement and Facebook's icon colour here.
     GM_addStyle(
       ".sc-in.sc-facebook-quick-save{position:absolute;right:46px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
         ".sc-in.sc-facebook-quick-unsave{color:var(--secondary-icon,currentColor)!important}" +
-        "#sc-facebook-story-dl{position:fixed;z-index:2147483647}",
+        "#sc-facebook-story-dl,#sc-fb-photo-viewer-dl{position:fixed;z-index:2147483647}" +
+        ".sc-ov.sc-fb-photo-dl{right:8px;top:8px}",
     );
 
     scWatchDom(() => {
+      scanPageData();
+      decoratePhotos();
+      syncViewerButton();
       decorateQuickSave();
       decorateQuickUnsave();
       syncStoryButton();
