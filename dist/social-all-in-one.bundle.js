@@ -1296,13 +1296,18 @@ location.hostname.includes("facebook.com") &&
       photos.set(String(photo.id), { uri: image.uri, ownerId: photo.owner && photo.owner.id });
       if (photos.size > 3000) photos.delete(photos.keys().next().value);
     }
-    const mediasets = new Map(); // mediaset_token -> [fbid, ...] in post order
+    // Every photo of a multi-photo post, keyed by each photo's fbid (posts that
+    // add photos to an album carry no mediaset_token, so the set= token of
+    // photo links cannot be relied on).
+    const photoGroups = new Map(); // fbid -> { ids: [fbid, ...], count }
     function rememberSet(attachment) {
       const ids = (attachment.all_subattachments.nodes || [])
         .map((node) => node && node.media && node.media.id)
         .filter(Boolean)
         .map(String);
-      if (ids.length) mediasets.set(attachment.mediaset_token, ids);
+      if (ids.length < 2) return;
+      const group = { ids, count: attachment.all_subattachments.count || ids.length };
+      for (const id of ids) if ((photoGroups.get(id)?.ids.length || 0) < ids.length) photoGroups.set(id, group);
     }
     // Videos carry progressive_urls (SD and HD MP4 with sound) and a DASH
     // manifest whose picture-only streams go higher (e.g. 1080p over a 720p
@@ -1341,7 +1346,7 @@ location.hostname.includes("facebook.com") &&
     function scanPayload(text) {
       if (typeof text !== "string") return;
       const video = /playable|video/i.test(text);
-      const photo = text.includes('"viewer_image"');
+      const photo = /"viewer_image"|"all_subattachments"/.test(text);
       const progressive = text.includes('"progressive_urls"');
       if (!video && !photo && !progressive) return;
       for (const line of text.replace(/^for \(;;\);/, "").split("\n")) {
@@ -1357,7 +1362,7 @@ location.hostname.includes("facebook.com") &&
           else if (value && typeof value === "object") {
             const here = isStoryCardId(value.id) ? value.id : card;
             if (photo && value.viewer_image) rememberPhoto(value);
-            if (photo && value.mediaset_token && value.all_subattachments) rememberSet(value);
+            if (value.all_subattachments) rememberSet(value);
             if (progressive && Array.isArray(value.progressive_urls) && value.id) rememberVideo(value, here);
             for (const [key, v] of Object.entries(value))
               if (typeof v === "string") {
@@ -1371,7 +1376,7 @@ location.hostname.includes("facebook.com") &&
     function scanPageData() {
       document.querySelectorAll('script[type="application/json"]:not([data-sc-scanned])').forEach((script) => {
         script.dataset.scScanned = "1";
-        if (/"viewer_image"|"progressive_urls"/.test(script.textContent)) scanPayload(script.textContent);
+        if (/"viewer_image"|"progressive_urls"|"all_subattachments"/.test(script.textContent)) scanPayload(script.textContent);
       });
     }
     (() => {
@@ -1787,19 +1792,11 @@ location.hostname.includes("facebook.com") &&
       if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
       await scSaveUrl(url, `${safeName(mediaOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
     }
-    const setTokenOf = (href) => {
-      try {
-        return new URL(href, location.href).searchParams.get("set");
-      } catch {
-        return null;
-      }
-    };
     // All photos of a post, one after another; reports any it had no data for.
-    async function downloadSet(token, scope) {
+    async function downloadSet(group, scope) {
       scanPageData();
-      const ids = mediasets.get(token) || [];
       let missing = 0;
-      for (const id of ids) {
+      for (const id of group.ids) {
         const photo = photos.get(id);
         if (!photo) {
           missing++;
@@ -1807,26 +1804,28 @@ location.hostname.includes("facebook.com") &&
         }
         await scSaveUrl(photo.uri, `${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
       }
-      if (missing) throw new Error(`Thiếu dữ liệu ${missing}/${ids.length} ảnh — cuộn lại bài viết rồi thử lại`);
+      // Facebook lists at most a handful of photos for some posts (count > ids).
+      const total = Math.max(group.count, group.ids.length);
+      if (missing || total > group.ids.length)
+        throw new Error(`Tải được ${group.ids.length - missing}/${total} ảnh — phần còn lại Facebook chưa gửi dữ liệu`);
     }
-    // The photo set of a post: the set= token of its photo links, when the
-    // GraphQL data listed more than one photo for it.
-    function postSetOf(post) {
-      for (const link of post.querySelectorAll('a[href*="set="]')) {
-        const token = setTokenOf(link.href);
-        if (token && (mediasets.get(token) || []).length > 1) return token;
+    // The photo group of a post: looked up from any of its photo links.
+    function postGroupOf(scope) {
+      for (const link of scope.querySelectorAll('a[href*="fbid="], a[href*="/photos/"]')) {
+        const group = photoGroups.get(photoIdOf(link.href));
+        if (group) return group;
       }
       return null;
     }
-    function setButton(token, scope, style) {
-      const count = (mediasets.get(token) || []).length;
-      const button = scButton(style, "stack", `Tải cả bộ ${count} ảnh`, { small: style === "inline" });
+    function setButton(group, scope, style) {
+      const total = Math.max(group.count, group.ids.length);
+      const button = scButton(style, "stack", `Tải cả bộ ${total} ảnh`, { small: style === "inline" });
       button.addEventListener(
         "click",
         (e) => {
           e.preventDefault();
           e.stopPropagation();
-          scRun(button, () => downloadSet(token, scope));
+          scRun(button, () => downloadSet(group, scope));
         },
         true,
       );
@@ -1835,11 +1834,12 @@ location.hostname.includes("facebook.com") &&
     // Feed posts with several photos: a stack button next to quick save.
     function decorateSets() {
       document.querySelectorAll(".sc-facebook-quick-save:not([data-sc-set])").forEach((save) => {
-        const post = save.closest('[aria-posinset],[role="article"]');
-        const token = post && postSetOf(post);
-        if (!token) return;
+        // A post opened from a link shows in a dialog without article markup.
+        const post = save.closest('[aria-posinset],[role="article"],[role="dialog"]');
+        const group = post && postGroupOf(post);
+        if (!group) return;
         save.dataset.scSet = "1";
-        const button = setButton(token, post, "inline");
+        const button = setButton(group, post, "inline");
         button.classList.add("sc-facebook-quick-set");
         save.parentElement.append(button);
       });
@@ -1902,14 +1902,14 @@ location.hostname.includes("facebook.com") &&
       button.style.left = `${Math.round(Math.max(8, r.right - 44))}px`;
       button.style.top = `${Math.round(Math.max(8, r.top + 12))}px`;
 
-      const token = setTokenOf(location.href);
+      const group = photoGroups.get(fbid);
       let all = document.getElementById("sc-fb-photo-viewer-all");
-      if (!token || (mediasets.get(token) || []).length < 2) return void (all && all.remove());
-      if (!all || all.dataset.token !== token) {
+      if (!group) return void (all && all.remove());
+      if (!all || all.dataset.group !== group.ids[0]) {
         if (all) all.remove();
-        all = setButton(token, img, "overlay");
+        all = setButton(group, img, "overlay");
         all.id = "sc-fb-photo-viewer-all";
-        all.dataset.token = token;
+        all.dataset.group = group.ids[0];
         document.body.append(all);
       }
       all.style.left = `${Math.round(Math.max(8, r.right - 84))}px`;
