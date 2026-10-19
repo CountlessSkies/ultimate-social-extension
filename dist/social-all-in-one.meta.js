@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.19.1455
+// @version      2026.10.19.1516
 // @description  Facebook quick-save, Instagram tools and media download, Threads media tools.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -11,6 +11,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_download
+// @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @grant        unsafeWindow
 // @connect      instagram.com
