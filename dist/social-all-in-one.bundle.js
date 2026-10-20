@@ -2021,6 +2021,43 @@ location.hostname.includes("facebook.com") &&
     // Players also move without scrolling (feed inserts, autoplay resizing).
     setInterval(() => videoButtons.size && placeVideoButtons(), 1000);
 
+    // Reel grids (a profile's Reels tab): thumbnail links to /reel/<id> whose
+    // video data the page already loaded; each tile gets an overlay button.
+    function decorateReelTiles() {
+      document.querySelectorAll('a[href*="/reel/"]:not([data-sc-reel])').forEach((link) => {
+        const id = (link.getAttribute("href").match(/\/reel\/(\d+)/) || [])[1];
+        const img = link.querySelector("img");
+        if (!id || link.querySelector("video")) return void (link.dataset.scReel = "0");
+        if (!img) return;
+        const r = img.getBoundingClientRect();
+        if (r.width < 120 || r.height < 120) return;
+        link.dataset.scReel = "1";
+        if (getComputedStyle(link).position === "static") link.style.position = "relative";
+        const button = scButton("overlay", "download", "Tải reel (nét nhất, không tiếng)");
+        button.classList.add("sc-fb-reel-tile-dl");
+        const stop = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+        };
+        ["pointerdown", "mousedown", "mouseup", "dblclick"].forEach((type) => button.addEventListener(type, stop, true));
+        button.addEventListener(
+          "click",
+          (e) => {
+            stop(e);
+            scRun(button, async () => {
+              scanPageData();
+              const data = videos.get(id);
+              const url = data && bestVideoUrl(data);
+              if (!url) throw new Error("Chưa có dữ liệu reel này — cuộn lại hoặc mở reel rồi thử lại");
+              await scSaveUrl(url, `${safeName(mediaOwner(link, id, data.ownerId))}_${id}.mp4`);
+            });
+          },
+          true,
+        );
+        link.append(button);
+      });
+    }
+
     function decorateVideos() {
       if (isStoryPage()) return;
       document.querySelectorAll("video:not([data-sc-video])").forEach((video) => {
@@ -2054,13 +2091,14 @@ location.hostname.includes("facebook.com") &&
         ".sc-in.sc-facebook-quick-unsave{color:var(--secondary-icon,currentColor)!important}" +
         "#sc-facebook-story-dl,#sc-fb-photo-viewer-dl,#sc-fb-photo-viewer-all{position:fixed;z-index:2147483647}" +
         ".sc-in.sc-facebook-quick-set{position:absolute;right:80px;top:1px;z-index:100;color:var(--secondary-icon,currentColor)!important}" +
-        ".sc-ov.sc-fb-photo-dl{right:8px;top:8px}.sc-ov.sc-fb-video-dl{position:fixed;z-index:2147483646}",
+        ".sc-ov.sc-fb-photo-dl,.sc-ov.sc-fb-reel-tile-dl{right:8px;top:8px}.sc-ov.sc-fb-video-dl{position:fixed;z-index:2147483646}",
     );
 
     scWatchDom(() => {
       scanPageData();
       decoratePhotos();
       decorateVideos();
+      decorateReelTiles();
       syncViewerButton();
       decorateQuickSave();
       decorateSets();
