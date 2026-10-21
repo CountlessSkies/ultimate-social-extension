@@ -206,7 +206,7 @@ location.hostname.endsWith("tiktok.com") &&
 
     // TikTok's own action buttons are 48px grey circles with white icons.
     GM_addStyle(
-      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px;z-index:2!important}.sc-ov.sc-tt-browse{top:72px;z-index:5!important}",
+      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px;z-index:2!important}.sc-ov.sc-tt-browse{top:72px;z-index:5!important;width:44px!important;height:44px!important}.sc-ov.sc-tt-browse .sc-icon{width:24px;height:24px}",
     );
 
     scWatchDom(() => {
