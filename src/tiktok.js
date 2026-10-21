@@ -139,29 +139,41 @@ location.hostname.endsWith("tiktok.com") &&
       });
     }
 
-    // Browse mode (a post opened from a profile/explore grid): the modal's
-    // like/comment/save row. The id comes from the URL at click time.
+    // Browse mode (a post opened from a profile/explore grid): an overlay at
+    // the top-right corner of the shown video/photo. The media fills the whole
+    // stage with object-fit: contain, so the corner is computed from its
+    // natural size. The id comes from the URL at click time.
+    let browseButton = null;
     function decorateBrowse() {
-      const like = document.querySelector('[data-e2e="browse-like-icon"]');
-      const row = like && like.closest("button")?.parentElement;
-      if (!row || row.querySelector(".sc-tt-browse")) return;
-      const button = scButton("inline", "download", "Tải video/ảnh (bản nét nhất)", { small: true });
-      button.classList.add("sc-tt-browse");
-      const stop = stopEvents(button);
-      button.addEventListener(
-        "click",
-        (e) => {
-          stop(e);
-          scRun(button, () => {
-            const id = idFromHref(location.pathname);
-            if (!id) throw new Error("Không tìm được ID video");
-            return downloadItem(id);
-          });
-        },
-        true,
-      );
-      row.append(button);
+      const stage = document.querySelector('[data-e2e="browse-video"], [class*="DivPhotoVideoContainer"]');
+      if (!stage || !idFromHref(location.pathname)) return void browseButton?.remove();
+      const box = stage.getBoundingClientRect();
+      if (!box.width || !box.height) return;
+      if (!browseButton) {
+        browseButton = scButton("overlay", "download", "Tải video/ảnh (bản nét nhất)");
+        browseButton.classList.add("sc-tt-browse");
+        const stop = stopEvents(browseButton);
+        browseButton.addEventListener(
+          "click",
+          (e) => {
+            stop(e);
+            scRun(browseButton, () => downloadItem(idFromHref(location.pathname)));
+          },
+          true,
+        );
+      }
+      if (browseButton.parentElement !== stage) {
+        if (getComputedStyle(stage).position === "static") stage.style.position = "relative";
+        stage.append(browseButton);
+      }
+      const media = document
+        .elementsFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+        .find((el) => (el.tagName === "VIDEO" && el.videoWidth) || (el.tagName === "IMG" && el.naturalWidth && stage.contains(el)));
+      const [w, h] = media ? (media.tagName === "VIDEO" ? [media.videoWidth, media.videoHeight] : [media.naturalWidth, media.naturalHeight]) : [9, 16];
+      const shown = w * Math.min(box.width / w, box.height / h);
+      browseButton.style.right = `${Math.max(0, (box.width - shown) / 2) + 12}px`;
     }
+    window.addEventListener("resize", () => decorateBrowse());
 
     // Grid tiles (profile, explore, search, "you may like"): overlay buttons.
     function decorateTiles() {
@@ -194,7 +206,7 @@ location.hostname.endsWith("tiktok.com") &&
 
     // TikTok's own action buttons are 48px grey circles with white icons.
     GM_addStyle(
-      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px;z-index:2!important}.sc-in.sc-tt-browse{background:rgba(127,127,127,.22)!important;color:inherit!important}",
+      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px;z-index:2!important}.sc-ov.sc-tt-browse{top:72px;z-index:5!important}",
     );
 
     scWatchDom(() => {
