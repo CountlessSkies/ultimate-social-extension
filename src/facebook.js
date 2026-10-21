@@ -395,7 +395,7 @@ location.hostname.includes("facebook.com") &&
       return url && { url, ext: "mp4", box: player || video };
     }
 
-    // <username or profile id>_<video id>.mp4 for videos, _<original file name> for photos
+    // fb_<username or profile id>_<video id>.mp4 for videos, _<original file name> for photos
     function storyFilename(url, ext, box, videoId) {
       const skip = new Set(["stories", "profile.php", "l.php", "watch", "reel", "home.php", "groups", "marketplace", "gaming"]);
       let username;
@@ -423,7 +423,7 @@ location.hostname.includes("facebook.com") &&
         cardId = (atob(last).match(/\d{6,}/) || [])[0];
       } catch {}
       const name = videoId ? `${videoId}.mp4` : fileNameOf(url);
-      return `${safeName(username || bucket || "unknown")}_${safeName(/\.[a-z0-9]{2,5}$/i.test(name) ? name : `${cardId || "media"}.${ext}`)}`;
+      return `fb_${safeName(username || bucket || "unknown")}_${safeName(/\.[a-z0-9]{2,5}$/i.test(name) ? name : `${cardId || "media"}.${ext}`)}`;
     }
 
     async function downloadStory() {
@@ -517,7 +517,7 @@ location.hostname.includes("facebook.com") &&
       const photo = photos.get(fbid);
       const url = (photo && photo.uri) || img.currentSrc || img.src;
       if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
-      await scSaveUrl(url, `${safeName(mediaOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
+      await scSaveUrl(url, `fb_${safeName(mediaOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
     }
     // All photos of a post, one after another; reports any it had no data for.
     async function downloadSet(group, scope) {
@@ -529,7 +529,7 @@ location.hostname.includes("facebook.com") &&
           missing++;
           continue;
         }
-        await scSaveUrl(photo.uri, `${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
+        await scSaveUrl(photo.uri, `fb_${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
       }
       // Facebook lists at most a handful of photos for some posts (count > ids).
       const total = Math.max(group.count, group.ids.length);
@@ -680,7 +680,7 @@ location.hostname.includes("facebook.com") &&
       const data = videos.get(id);
       const url = data && bestVideoUrl(data);
       if (!url) throw new Error("Chưa có dữ liệu video này — cuộn lại hoặc tải lại trang");
-      await scSaveUrl(url, `${safeName(mediaOwner(video, id, data.ownerId))}_${id}.mp4`);
+      await scSaveUrl(url, `fb_${safeName(mediaOwner(video, id, data.ownerId))}_${id}.mp4`);
     }
     // Facebook lays a transparent click layer (it opens the video) over feed
     // players, covering anything placed inside them. The buttons therefore live
@@ -756,7 +756,7 @@ location.hostname.includes("facebook.com") &&
               const data = videos.get(id);
               const url = data && bestVideoUrl(data);
               if (!url) throw new Error("Chưa có dữ liệu reel này — cuộn lại hoặc mở reel rồi thử lại");
-              await scSaveUrl(url, `${safeName(mediaOwner(link, id, data.ownerId))}_${id}.mp4`);
+              await scSaveUrl(url, `fb_${safeName(mediaOwner(link, id, data.ownerId))}_${id}.mp4`);
             });
           },
           true,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.21.1959
+// @version      2026.10.21.2000
 // @description  Media download and quick save for Facebook, Instagram, Threads and TikTok.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
