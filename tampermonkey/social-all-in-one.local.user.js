@@ -7,6 +7,7 @@
 // @match        https://*.instagram.com/*
 // @match        https://*.threads.net/*
 // @match        https://*.threads.com/*
+// @match        https://*.tiktok.com/*
 // @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -20,10 +21,13 @@
 // @connect      threads.com
 // @connect      cdninstagram.com
 // @connect      fbcdn.net
+// @connect      tiktok.com
+// @connect      tiktokcdn.com
 // @require      file:///D:/AgentWorks/ultimate-social-extension/src/shared.js
 // @require      file:///D:/AgentWorks/ultimate-social-extension/src/core.js
 // @require      file:///D:/AgentWorks/ultimate-social-extension/src/facebook.js
 // @require      file:///D:/AgentWorks/ultimate-social-extension/src/instagram.js
+// @require      file:///D:/AgentWorks/ultimate-social-extension/src/tiktok.js
 // ==/UserScript==
 
 // The implementation is loaded straight from the workspace sources above, in
