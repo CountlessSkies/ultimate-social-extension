@@ -139,6 +139,30 @@ location.hostname.endsWith("tiktok.com") &&
       });
     }
 
+    // Browse mode (a post opened from a profile/explore grid): the modal's
+    // like/comment/save row. The id comes from the URL at click time.
+    function decorateBrowse() {
+      const like = document.querySelector('[data-e2e="browse-like-icon"]');
+      const row = like && like.closest("button")?.parentElement;
+      if (!row || row.querySelector(".sc-tt-browse")) return;
+      const button = scButton("inline", "download", "Tải video/ảnh (bản nét nhất)", { small: true });
+      button.classList.add("sc-tt-browse");
+      const stop = stopEvents(button);
+      button.addEventListener(
+        "click",
+        (e) => {
+          stop(e);
+          scRun(button, () => {
+            const id = idFromHref(location.pathname);
+            if (!id) throw new Error("Không tìm được ID video");
+            return downloadItem(id);
+          });
+        },
+        true,
+      );
+      row.append(button);
+    }
+
     // Grid tiles (profile, explore, search, "you may like"): overlay buttons.
     function decorateTiles() {
       document.querySelectorAll('a[href*="/video/"]:not([data-sc-tt]), a[href*="/photo/"]:not([data-sc-tt])').forEach((link) => {
@@ -170,12 +194,13 @@ location.hostname.endsWith("tiktok.com") &&
 
     // TikTok's own action buttons are 48px grey circles with white icons.
     GM_addStyle(
-      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px}",
+      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px;z-index:2!important}.sc-in.sc-tt-browse{background:rgba(127,127,127,.22)!important;color:inherit!important}",
     );
 
     scWatchDom(() => {
       scanPageData();
       decorateFeed();
+      decorateBrowse();
       decorateTiles();
     });
   })();
