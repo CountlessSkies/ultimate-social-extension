@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.21.2017
+// @version      2026.10.27.2121
 // @description  Media download and quick save for Facebook, Instagram, Threads and TikTok.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -189,12 +189,23 @@ function scSetState(button, state, message) {
     scResetTimers.set(button, setTimeout(() => scSetState(button, "idle"), state === "error" ? 6000 : 1800));
 }
 
-// Runs `job` with loading / done / error feedback; clicks while busy are ignored.
-async function scRun(button, job) {
+// Downloads run one job at a time in click order, so several carousels clicked
+// in a row land as A1 A2 A3 B1 B2 instead of interleaving.
+var scQueueTail = Promise.resolve();
+function scQueue(job) {
+  const run = scQueueTail.then(job);
+  scQueueTail = run.catch(() => {});
+  return run;
+}
+
+// Runs `job` with loading / done / error feedback; clicks while busy are
+// ignored. Jobs wait in the download queue unless `queue` is false (quick
+// save/unsave, which should not wait behind downloads).
+async function scRun(button, job, { queue = true } = {}) {
   if (button.dataset.state === "loading") return;
   scSetState(button, "loading");
   try {
-    await job();
+    await (queue ? scQueue(job) : job());
     scSetState(button, "done");
   } catch (err) {
     scSetState(button, "error", `Lỗi: ${err instanceof Error ? err.message : String(err)}`);
@@ -1023,6 +1034,7 @@ function scBestDashVideo(xml) {
                 if (!p) {
                   (p = !0), scSetState(r, "loading");
                   try {
+                    await scQueue(async () => {
                     if (e) {
                       // Largest srcset candidate: src is often a small one.
                       const src =
@@ -1143,6 +1155,7 @@ function scBestDashVideo(xml) {
                         `threads_${l}_${(null == a ? void 0 : a.id) || h(n)}.mp4`,
                       );
                     }
+                    });
                     scSetState(r, "done");
                   } catch (t) {
                     console.warn("[Social All-in-One]", t),
@@ -1526,7 +1539,7 @@ location.hostname.includes("facebook.com") &&
             e.preventDefault();
             e.stopPropagation();
             if (button.dataset.saved) return;
-            await scRun(button, () => quickSave(trigger));
+            await scRun(button, () => quickSave(trigger), { queue: false });
             // Saved: keep a filled bookmark, like Facebook's own saved state.
             if (button.dataset.state === "done") {
               button.dataset.saved = "1";
@@ -1572,7 +1585,7 @@ location.hostname.includes("facebook.com") &&
           (e) => {
             e.preventDefault();
             e.stopPropagation();
-            scRun(button, () => quickUnsave(trigger, button));
+            scRun(button, () => quickUnsave(trigger, button), { queue: false });
           },
           true,
         );

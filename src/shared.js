@@ -160,12 +160,23 @@ function scSetState(button, state, message) {
     scResetTimers.set(button, setTimeout(() => scSetState(button, "idle"), state === "error" ? 6000 : 1800));
 }
 
-// Runs `job` with loading / done / error feedback; clicks while busy are ignored.
-async function scRun(button, job) {
+// Downloads run one job at a time in click order, so several carousels clicked
+// in a row land as A1 A2 A3 B1 B2 instead of interleaving.
+var scQueueTail = Promise.resolve();
+function scQueue(job) {
+  const run = scQueueTail.then(job);
+  scQueueTail = run.catch(() => {});
+  return run;
+}
+
+// Runs `job` with loading / done / error feedback; clicks while busy are
+// ignored. Jobs wait in the download queue unless `queue` is false (quick
+// save/unsave, which should not wait behind downloads).
+async function scRun(button, job, { queue = true } = {}) {
   if (button.dataset.state === "loading") return;
   scSetState(button, "loading");
   try {
-    await job();
+    await (queue ? scQueue(job) : job());
     scSetState(button, "done");
   } catch (err) {
     scSetState(button, "error", `Lỗi: ${err instanceof Error ? err.message : String(err)}`);

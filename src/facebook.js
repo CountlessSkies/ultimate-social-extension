@@ -204,7 +204,7 @@ location.hostname.includes("facebook.com") &&
             e.preventDefault();
             e.stopPropagation();
             if (button.dataset.saved) return;
-            await scRun(button, () => quickSave(trigger));
+            await scRun(button, () => quickSave(trigger), { queue: false });
             // Saved: keep a filled bookmark, like Facebook's own saved state.
             if (button.dataset.state === "done") {
               button.dataset.saved = "1";
@@ -250,7 +250,7 @@ location.hostname.includes("facebook.com") &&
           (e) => {
             e.preventDefault();
             e.stopPropagation();
-            scRun(button, () => quickUnsave(trigger, button));
+            scRun(button, () => quickUnsave(trigger, button), { queue: false });
           },
           true,
         );

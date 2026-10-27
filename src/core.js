@@ -783,6 +783,7 @@
                 if (!p) {
                   (p = !0), scSetState(r, "loading");
                   try {
+                    await scQueue(async () => {
                     if (e) {
                       // Largest srcset candidate: src is often a small one.
                       const src =
@@ -903,6 +904,7 @@
                         `threads_${l}_${(null == a ? void 0 : a.id) || h(n)}.mp4`,
                       );
                     }
+                    });
                     scSetState(r, "done");
                   } catch (t) {
                     console.warn("[Social All-in-One]", t),
