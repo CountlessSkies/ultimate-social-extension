@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.10.27.2121
+// @version      2026.10.31.0809
 // @description  Media download and quick save for Facebook, Instagram, Threads and TikTok.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -2610,8 +2610,10 @@ location.hostname.includes('instagram.com') && (() => {
 
   function interceptCarouselHotkeys(event) {
     if (event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
-    const key = event.key.toLowerCase();
-    const side = key === 'a' ? 'left' : key === 'd' ? 'right' : null;
+    // event.code is the physical key: a Vietnamese IME (Telex) turns event.key
+    // into "Process" or a toned letter, so A/D/S would stop working.
+    const key = event.code;
+    const side = key === 'KeyA' ? 'left' : key === 'KeyD' ? 'right' : null;
     if (!side || !clickCarouselControl(side)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
@@ -2810,7 +2812,7 @@ location.hostname.includes('instagram.com') && (() => {
   // S downloads the open story, or the targeted feed post / open post. One
   // handler for both, so neither swallows the key for the other.
   function interceptDownloadHotkey(event) {
-    if (event.key.toLowerCase() !== 's' || event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
+    if (event.code !== 'KeyS' || event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
     const story = location.pathname.startsWith('/stories/') && document.getElementById('sc-ig-page-dl');
     const target = story || nearestVisibleButton();
     const button = !story && event.shiftKey ? target?.parentElement?.querySelector(`.${CLASS}[data-kind="all"]`) : target;
