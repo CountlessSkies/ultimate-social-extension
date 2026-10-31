@@ -2554,9 +2554,9 @@ location.hostname.includes('instagram.com') && (() => {
     return document;
   }
 
-  function clickCarouselControl(side) {
+  function findCarouselControl(side) {
     const scope = carouselScope();
-    if (!scope) return false;
+    if (!scope) return null;
     const isNext = side === 'right';
     const semanticSelector = isNext
       ? 'button[aria-label="Next"], button[aria-label="Tiếp"]'
@@ -2574,20 +2574,7 @@ location.hostname.includes('instagram.com') && (() => {
       });
       button = pickCarouselControl(candidates, side);
     }
-    if (!button) return false;
-    button.click();
-    return true;
-  }
-
-  function interceptCarouselHotkeys(event) {
-    if (event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
-    // event.code is the physical key: a Vietnamese IME (Telex) turns event.key
-    // into "Process" or a toned letter, so A/D/S would stop working.
-    const key = event.code;
-    const side = key === 'KeyA' ? 'left' : key === 'KeyD' ? 'right' : null;
-    if (!side || !clickCarouselControl(side)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
+    return button;
   }
 
   function addButton(container, kind) {
@@ -2780,27 +2767,56 @@ location.hostname.includes('instagram.com') && (() => {
   }
 
   // ---- Hotkeys ----
-  // S downloads the open story, or the targeted feed post / open post. One
-  // handler for both, so neither swallows the key for the other.
-  function interceptDownloadHotkey(event) {
-    if (event.code !== 'KeyS' || event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
-    const story = location.pathname.startsWith('/stories/') && document.getElementById('sc-ig-page-dl');
-    const target = story || nearestVisibleButton();
-    const button = !story && event.shiftKey ? target?.parentElement?.querySelector(`.${CLASS}[data-kind="all"]`) : target;
-    if (!button) return;
+  // A / D move the carousel; S downloads the open story or the targeted post,
+  // Shift+S the whole post.
+  // Vietnamese input methods: keys are read by physical key (event.code), which
+  // covers IMEs that report "Process". Unikey (Telex) instead swallows a key
+  // that completes a transform (aa → â, dd → đ, a+s → á, ss → "as" undo) and
+  // types Backspace + the result, so those characters are mapped back to the
+  // key that produced them, and a burst is coalesced so only its last key acts.
+  function hotkeyOf(event) {
+    const byCode = { KeyA: 'a', KeyD: 'd', KeyS: 's' }[event.code];
+    if (byCode) return byCode;
+    if (!event.key || event.key.length !== 1) return null;
+    const char = event.key.toLowerCase();
+    if (char === 'đ') return 'd';
+    const [base, ...marks] = char.normalize('NFD');
+    if (marks.includes('́')) return 's'; // sắc: the S key
+    if (marks.length && marks.join('') !== '̂') return null; // other tones / breve
+    return ['a', 'd', 's'].includes(base) ? base : null;
+  }
+
+  function hotkeyAction(key, shift) {
+    if (key === 's') {
+      const story = location.pathname.startsWith('/stories/') && document.getElementById('sc-ig-page-dl');
+      if (story) return () => story.click();
+      const target = nearestVisibleButton();
+      const button = shift ? target?.parentElement?.querySelector(`.${CLASS}[data-kind="all"]`) : target;
+      return button && (() => startDownload(button));
+    }
+    const control = findCarouselControl(key === 'a' ? 'left' : 'right');
+    return control && (() => control.click());
+  }
+
+  let pendingHotkey = 0;
+  function interceptHotkeys(event) {
+    if (event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
+    const key = hotkeyOf(event);
+    if (!key) return;
+    const shift = event.shiftKey || (event.key.length === 1 && event.key !== event.key.toLowerCase());
+    const action = hotkeyAction(key, shift);
+    if (!action) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    // Start once on keydown, but also suppress the matching keypress/keyup:
-    // Instagram may bind its Save action to a different keyboard event.
-    if (event.type !== 'keydown') return;
-    if (story) story.click();
-    else startDownload(button);
+    // keyup is only suppressed: Instagram may bind Save to another event.
+    if (event.type === 'keyup') return;
+    clearTimeout(pendingHotkey);
+    pendingHotkey = setTimeout(action, 40);
   }
 
   ['keydown', 'keypress', 'keyup'].forEach((type) => {
-    window.addEventListener(type, interceptDownloadHotkey, true);
+    window.addEventListener(type, interceptHotkeys, true);
   });
-  window.addEventListener('keydown', interceptCarouselHotkeys, true);
   window.addEventListener('scroll', refreshHotkeyIndicator, { passive: true });
   window.addEventListener('resize', refreshHotkeyIndicator, { passive: true });
 
