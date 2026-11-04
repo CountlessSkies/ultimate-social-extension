@@ -59,10 +59,12 @@ var scIsTyping = (t) =>
 // Downloads `url` under `name`. The bytes are fetched first and saved through a
 // Blob URL so `a.download` decides the file name (GM_download and the browser
 // may ignore a name given for a cross-origin URL). GM_xmlhttpRequest covers
-// CDNs that do not send CORS headers.
-async function scFetchBlob(url) {
+// CDNs that do not send CORS headers. `referer` is for CDNs that answer 403
+// unless the request carries the site's cookies and Referer (TikTok videos):
+// fetch then sends cookies, and GM_xmlhttpRequest sends that Referer.
+async function scFetchBlob(url, { referer } = {}) {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, referer ? { credentials: "include" } : undefined);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     if (blob.size) return blob;
@@ -73,6 +75,7 @@ async function scFetchBlob(url) {
     GM_xmlhttpRequest({
       method: "GET",
       url,
+      headers: referer ? { Referer: referer } : undefined,
       responseType: "blob",
       onload: (r) =>
         r.status >= 200 && r.status < 300 && r.response && r.response.size
@@ -83,8 +86,8 @@ async function scFetchBlob(url) {
     }),
   );
 }
-async function scSaveUrl(url, name) {
-  const blobUrl = URL.createObjectURL(await scFetchBlob(url));
+async function scSaveUrl(url, name, options) {
+  const blobUrl = URL.createObjectURL(await scFetchBlob(url, options));
   const a = document.createElement("a");
   a.href = blobUrl;
   a.download = name;

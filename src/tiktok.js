@@ -97,7 +97,8 @@ location.hostname.endsWith("tiktok.com") &&
       }
       const url = item.video && bestVideoUrl(item.video);
       if (!url) throw new Error("Không có link video");
-      await scSaveUrl(url, `tt_${user}_${item.id}.mp4`);
+      // The video CDN answers 403 without TikTok's cookies and Referer.
+      await scSaveUrl(url, `tt_${user}_${item.id}.mp4`, { referer: `${location.origin}/` });
     }
 
     const idFromHref = (href) => ((href || "").match(/\/(?:video|photo)\/(\d+)/) || [])[1] || null;

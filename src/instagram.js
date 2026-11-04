@@ -681,7 +681,8 @@ location.hostname.includes('instagram.com') && (() => {
     if (event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
     const key = hotkeyOf(event);
     if (!key) return;
-    const shift = event.shiftKey || (event.key.length === 1 && event.key !== event.key.toLowerCase());
+    // An uppercase character only means Shift when Caps Lock is off.
+    const shift = event.shiftKey || (event.key.length === 1 && event.key !== event.key.toLowerCase() && !event.getModifierState?.('CapsLock'));
     const action = hotkeyAction(key, shift);
     if (!action) return;
     event.preventDefault();

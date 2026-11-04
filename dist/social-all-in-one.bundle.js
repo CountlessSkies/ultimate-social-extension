@@ -59,10 +59,12 @@ var scIsTyping = (t) =>
 // Downloads `url` under `name`. The bytes are fetched first and saved through a
 // Blob URL so `a.download` decides the file name (GM_download and the browser
 // may ignore a name given for a cross-origin URL). GM_xmlhttpRequest covers
-// CDNs that do not send CORS headers.
-async function scFetchBlob(url) {
+// CDNs that do not send CORS headers. `referer` is for CDNs that answer 403
+// unless the request carries the site's cookies and Referer (TikTok videos):
+// fetch then sends cookies, and GM_xmlhttpRequest sends that Referer.
+async function scFetchBlob(url, { referer } = {}) {
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, referer ? { credentials: "include" } : undefined);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
     if (blob.size) return blob;
@@ -73,6 +75,7 @@ async function scFetchBlob(url) {
     GM_xmlhttpRequest({
       method: "GET",
       url,
+      headers: referer ? { Referer: referer } : undefined,
       responseType: "blob",
       onload: (r) =>
         r.status >= 200 && r.status < 300 && r.response && r.response.size
@@ -83,8 +86,8 @@ async function scFetchBlob(url) {
     }),
   );
 }
-async function scSaveUrl(url, name) {
-  const blobUrl = URL.createObjectURL(await scFetchBlob(url));
+async function scSaveUrl(url, name, options) {
+  const blobUrl = URL.createObjectURL(await scFetchBlob(url, options));
   const a = document.createElement("a");
   a.href = blobUrl;
   a.download = name;
@@ -2803,7 +2806,8 @@ location.hostname.includes('instagram.com') && (() => {
     if (event.ctrlKey || event.altKey || event.metaKey || event.repeat || scIsTyping(event.target)) return;
     const key = hotkeyOf(event);
     if (!key) return;
-    const shift = event.shiftKey || (event.key.length === 1 && event.key !== event.key.toLowerCase());
+    // An uppercase character only means Shift when Caps Lock is off.
+    const shift = event.shiftKey || (event.key.length === 1 && event.key !== event.key.toLowerCase() && !event.getModifierState?.('CapsLock'));
     const action = hotkeyAction(key, shift);
     if (!action) return;
     event.preventDefault();
@@ -2934,7 +2938,8 @@ location.hostname.endsWith("tiktok.com") &&
       }
       const url = item.video && bestVideoUrl(item.video);
       if (!url) throw new Error("Không có link video");
-      await scSaveUrl(url, `tt_${user}_${item.id}.mp4`);
+      // The video CDN answers 403 without TikTok's cookies and Referer.
+      await scSaveUrl(url, `tt_${user}_${item.id}.mp4`, { referer: `${location.origin}/` });
     }
 
     const idFromHref = (href) => ((href || "").match(/\/(?:video|photo)\/(\d+)/) || [])[1] || null;
