@@ -192,6 +192,9 @@ location.hostname.includes("facebook.com") &&
     function decorateQuickSave() {
       document.querySelectorAll(POST_MENU_SELECTOR).forEach((trigger) => {
         if (!scIsVisible(trigger)) return;
+        // Chat messages (Messenger page and chat popups) show a hover toolbar
+        // whose "More actions" matches too; it lives in role="log".
+        if (trigger.closest('[role="log"], [role="toolbar"]')) return;
         const host = trigger.parentElement && trigger.parentElement.parentElement;
         if (!host || host.querySelector(".sc-facebook-quick-save")) return;
         if (getComputedStyle(host).position === "static") host.style.position = "relative";
