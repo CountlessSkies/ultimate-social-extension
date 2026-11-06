@@ -93,6 +93,26 @@ location.hostname.includes('instagram.com') && (() => {
     return mediaIdCache.get(key);
   }
 
+  // With a fractional display scale Instagram sets a `dpr` cookie and then caps
+  // image candidates at 1080 px (up to 4096 px without it). The cookie is
+  // removed while our API calls run and put back afterwards; concurrent calls
+  // share one removal.
+  let dprHold = { count: 0, value: null };
+  async function withoutDprCookie(run) {
+    if (!dprHold.count) {
+      dprHold.value = (document.cookie.match(/(?:^|; )dpr=([^;]*)/) || [])[1] || null;
+      if (dprHold.value) document.cookie = 'dpr=; Max-Age=0; path=/; domain=.instagram.com';
+    }
+    dprHold.count++;
+    try {
+      return await run();
+    } finally {
+      if (!--dprHold.count && dprHold.value) {
+        document.cookie = `dpr=${dprHold.value}; Max-Age=604800; path=/; domain=.instagram.com`;
+      }
+    }
+  }
+
   async function mediaInfo(id) {
     const cached = mediaInfoCache.get(id);
     if (cached && Date.now() - cached.time < INFO_TTL) return cached.item;
@@ -100,7 +120,7 @@ location.hostname.includes('instagram.com') && (() => {
     const headers = { Accept: '*/*', 'X-IG-App-ID': findAppId() };
     // A content script has host permissions, while a userscript does not.
     // Tampermonkey makes this cross-origin API request.
-    const payload = await new Promise((resolve, reject) => {
+    const payload = await withoutDprCookie(() => new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: 'GET',
         url: apiUrl,
@@ -115,7 +135,7 @@ location.hostname.includes('instagram.com') && (() => {
         onerror: () => reject(new Error('Instagram API request failed')),
         ontimeout: () => reject(new Error('Instagram API request timed out')),
       });
-    });
+    }));
     const item = payload.items?.[0];
     if (!item) throw new Error('Instagram returned no media');
     mediaInfoCache.set(id, { item, time: Date.now() });
