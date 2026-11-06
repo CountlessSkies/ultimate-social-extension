@@ -39,6 +39,23 @@ location.hostname.includes('instagram.com') && (() => {
     const name = friendlyName || (bodyText(body).match(/fb_api_req_friendly_name=([^&]+)/) || [])[1] || '';
     return SEEN_NAME_RE.test(decodeURIComponent(name));
   };
+  // HD profile pictures (1080 px), remembered from the profile data Instagram
+  // loads itself: users/{id}/info answers 429 quickly and web_profile_info is
+  // gone, so no extra request is made.
+  const profilePics = new Map(); // lowercase username -> hd url
+  function rememberProfilePics(text) {
+    if (typeof text !== 'string' || !text.includes('hd_profile_pic_url_info')) return;
+    const walk = (node, depth) => {
+      if (!node || typeof node !== 'object' || depth > 40) return;
+      const url = node.hd_profile_pic_url_info && node.hd_profile_pic_url_info.url;
+      if (url && typeof node.username === 'string') profilePics.set(node.username.toLowerCase(), url);
+      for (const key in node) walk(node[key], depth + 1);
+    };
+    for (const line of text.split('\n')) {
+      try { walk(JSON.parse(line.replace(/^for \(;;\);/, '')), 0); } catch (_) {}
+    }
+  }
+
   (() => {
     const page = unsafeWindow;
     if (page.__scIgGhostHook) return;
@@ -55,6 +72,13 @@ location.hostname.includes('instagram.com') && (() => {
       return setRequestHeader.call(this, name, value);
     };
     proto.send = function (body) {
+      if (/graphql/.test(this.__scUrl || '')) {
+        this.addEventListener('load', () => {
+          try {
+            if (this.responseType === '' || this.responseType === 'text') rememberProfilePics(this.responseText);
+          } catch (_) {}
+        }, { once: true });
+      }
       if (!ghost || !isSeenRequest(this.__scUrl || '', body, this.__scName)) return send.call(this, body);
       const response = this.responseType === 'json' ? JSON.parse(FAKE_BODY) : FAKE_BODY;
       const values = { readyState: 4, status: 200, statusText: 'OK', responseText: FAKE_BODY, response, responseURL: this.__scUrl };
@@ -70,7 +94,9 @@ location.hostname.includes('instagram.com') && (() => {
         console.info(SC_TAG, 'Ghost mode: blocked', url);
         return Promise.resolve(new page.Response(FAKE_BODY, { status: 200, headers: { 'Content-Type': 'application/json' } }));
       }
-      return pageFetch(input, init);
+      const result = pageFetch(input, init);
+      if (/graphql/.test(url)) result.then((res) => res.clone().text()).then(rememberProfilePics).catch(() => {});
+      return result;
     };
   })();
 
@@ -740,6 +766,46 @@ location.hostname.includes('instagram.com') && (() => {
     syncGhostButton(button);
   }
 
+  // Profile header: a button on the avatar saves the 1080 px profile picture
+  // as <username>_<original CDN file name>.
+  const NOT_PROFILES = new Set(['explore', 'direct', 'reels', 'stories', 'accounts', 'p', 'reel', 'tv', 'about', 'legal']);
+  const profileUsername = () => {
+    const name = (location.pathname.match(/^\/([A-Za-z0-9._]+)\/?(?:$|reels\/|tagged\/|saved\/)/) || [])[1];
+    return name && !NOT_PROFILES.has(name.toLowerCase()) ? name : null;
+  };
+  function decorateProfileAvatar() {
+    document.querySelectorAll('script[type="application/json"]:not([data-sc-pics])').forEach((script) => {
+      script.dataset.scPics = '1';
+      rememberProfilePics(script.textContent);
+    });
+    const username = profileUsername();
+    const header = username && document.querySelector('main header, header');
+    const avatar = header && [...header.querySelectorAll('img')]
+      .filter((img) => img.getBoundingClientRect().width >= 70)
+      .sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width)[0];
+    if (!avatar) return;
+    // The avatar sits in a round overflow:hidden box: hang the button on the
+    // box's parent so it is not clipped.
+    let clip = avatar.parentElement;
+    for (let n = avatar.parentElement, i = 0; n && i < 4; n = n.parentElement, i++) {
+      if (getComputedStyle(n).overflow === 'hidden') { clip = n; break; }
+    }
+    const host = clip.parentElement;
+    if (!host) return;
+    const existing = host.querySelector(':scope > .sc-ig-avatar');
+    if (existing) return void (existing.dataset.user = username);
+    if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    const button = makeOverlayButton('download', 'Tải ảnh đại diện (HD)', async () => {
+      const user = button.dataset.user;
+      const url = profilePics.get(user.toLowerCase());
+      if (!url) throw new Error('Chưa có dữ liệu ảnh đại diện — tải lại trang profile rồi thử lại');
+      await save({ url, type: 'image', username: user, id: user, sourceName: filenameFromUrl(url) });
+    });
+    button.classList.add('sc-ig-avatar');
+    button.dataset.user = username;
+    host.append(button);
+  }
+
   function decorateGrid() {
     document.querySelectorAll('a[href]:not([data-sc-grid])').forEach((a) => {
       const match = a.getAttribute('href').match(CODE_RE);
@@ -816,7 +882,7 @@ location.hostname.includes('instagram.com') && (() => {
 
   // Look comes from the shared kit; only placement is set here.
   GM_addStyle(
-    '.sc-ov.sc-ig-grid{left:8px;top:8px}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646}' +
+    '.sc-ov.sc-ig-grid{left:8px;top:8px}.sc-ov.sc-ig-avatar{right:0;bottom:0}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646}' +
       `#sc-ig-ghost{position:fixed;right:74px;bottom:64px;z-index:2147483646}#sc-ig-ghost[data-active]{background:${SC_ACCENT}!important;border-color:${SC_ACCENT}!important}`,
   );
 
@@ -825,6 +891,7 @@ location.hostname.includes('instagram.com') && (() => {
     scanPosts();
     scanReels();
     syncStoryButton();
+    decorateProfileAvatar();
     decorateGrid();
     refreshHotkeyIndicator();
   });
