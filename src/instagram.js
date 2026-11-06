@@ -324,8 +324,9 @@ location.hostname.includes('instagram.com') && (() => {
     return `${username}_${sourceName}`;
   }
 
-  async function save(media) {
+  async function save(media, { skipSaved = false } = {}) {
     const name = makeFilename(media);
+    if (scSkipIfSaved(name, skipSaved)) return;
     // Obtain the media bytes, then download a Blob URL so `anchor.download` is
     // the filename authority (GM_download may ignore the name).
     // Tampermonkey's XHR supplies the cross-origin access formerly provided by
@@ -352,6 +353,7 @@ location.hostname.includes('instagram.com') && (() => {
     anchor.remove();
     // Large videos need time before the Blob URL can be released.
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    scMarkSaved(name);
   }
 
   // ---- Feed / post / reel buttons ----
@@ -603,7 +605,7 @@ location.hostname.includes('instagram.com') && (() => {
     const id = await findMediaId(code, route);
     if (!id) throw new Error('Could not resolve Instagram media id');
     const parent = await mediaInfo(id);
-    for (const item of parent.carousel_media || [parent]) await save(toDownload(item, parent));
+    for (const item of parent.carousel_media || [parent]) await save(toDownload(item, parent), { skipSaved: true });
   }
 
   // Overlay buttons for the story viewer and grid tiles.

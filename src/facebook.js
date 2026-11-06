@@ -532,7 +532,9 @@ location.hostname.includes("facebook.com") &&
           missing++;
           continue;
         }
-        await scSaveUrl(photo.uri, `fb_${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
+        await scSaveUrl(photo.uri, `fb_${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`, {
+          skipSaved: true,
+        });
       }
       // Facebook lists at most a handful of photos for some posts (count > ids).
       const total = Math.max(group.count, group.ids.length);

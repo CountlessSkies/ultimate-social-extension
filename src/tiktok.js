@@ -91,7 +91,7 @@ location.hostname.endsWith("tiktok.com") &&
           const url = image.imageURL && image.imageURL.urlList && image.imageURL.urlList[0];
           if (!url) continue;
           const ext = (new URL(url).pathname.match(/\.(jpe?g|png|webp|heic)/i) || [, "jpg"])[1].toLowerCase();
-          await scSaveUrl(url, `tt_${user}_${item.id}_${index + 1}.${ext}`);
+          await scSaveUrl(url, `tt_${user}_${item.id}_${index + 1}.${ext}`, { skipSaved: images.length > 1 });
         }
         return;
       }

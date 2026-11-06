@@ -571,7 +571,7 @@
           // threads_<user>_<original file name>, like the single-item buttons.
           for (const item of items) {
             const name = new URL(item.url).pathname.split("/").pop() || ("video" === item.kind ? "video.mp4" : "image.jpg");
-            await f(item.url, `threads_${(data && data.user) || user}_${name}`);
+            await f(item.url, `threads_${(data && data.user) || user}_${name}`, { skipSaved: true });
           }
         });
       };

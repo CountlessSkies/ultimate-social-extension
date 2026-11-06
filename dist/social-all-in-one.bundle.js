@@ -86,7 +86,27 @@ async function scFetchBlob(url, { referer } = {}) {
     }),
   );
 }
-async function scSaveUrl(url, name, options) {
+// ---- Download history ----
+// Every saved file name is remembered in GM storage (one key per name). Our
+// names are stable per media (<prefix><user>_<media id or CDN name>), so a
+// known name means the file was downloaded before. Jobs that save several
+// files (whole post, photo set) pass `skipSaved` and skip those; a click on
+// one item always downloads. scRun reports the skip count of its job (jobs
+// run one at a time in the queue, so one counter is enough).
+var scSkipped = 0;
+var scHistoryKey = (name) => `dl:${String(name).toLowerCase()}`;
+var scWasSaved = (name) => !!GM_getValue(scHistoryKey(name), 0);
+var scMarkSaved = (name) => GM_setValue(scHistoryKey(name), Date.now());
+// True when the file should be skipped (and counts it).
+function scSkipIfSaved(name, skipSaved) {
+  if (!skipSaved || !scWasSaved(name)) return false;
+  scSkipped++;
+  return true;
+}
+
+// Returns false when skipped by `skipSaved`.
+async function scSaveUrl(url, name, options = {}) {
+  if (scSkipIfSaved(name, options.skipSaved)) return false;
   const blobUrl = URL.createObjectURL(await scFetchBlob(url, options));
   const a = document.createElement("a");
   a.href = blobUrl;
@@ -97,6 +117,8 @@ async function scSaveUrl(url, name, options) {
   a.remove();
   // Large videos need time before the Blob URL can be released.
   setTimeout(() => URL.revokeObjectURL(blobUrl), 6e4);
+  scMarkSaved(name);
+  return true;
 }
 
 // ---- Button design kit ----
@@ -178,9 +200,16 @@ function scQueue(job) {
 async function scRun(button, job, { queue = true } = {}) {
   if (button.dataset.state === "loading") return;
   scSetState(button, "loading");
+  const counted = async () => {
+    scSkipped = 0;
+    await job();
+    return scSkipped;
+  };
   try {
-    await (queue ? scQueue(job) : job());
-    scSetState(button, "done");
+    // Unqueued jobs (quick save) save no files and must not reset the
+    // counter of the download running in the queue.
+    const skipped = queue ? await scQueue(counted) : (await job(), 0);
+    scSetState(button, "done", skipped ? `Xong — bỏ qua ${skipped} file đã tải trước đó` : undefined);
   } catch (err) {
     scSetState(button, "error", `Lỗi: ${err instanceof Error ? err.message : String(err)}`);
     console.error(SC_TAG, err);
@@ -796,7 +825,7 @@ function scBestDashVideo(xml) {
           // threads_<user>_<original file name>, like the single-item buttons.
           for (const item of items) {
             const name = new URL(item.url).pathname.split("/").pop() || ("video" === item.kind ? "video.mp4" : "image.jpg");
-            await f(item.url, `threads_${(data && data.user) || user}_${name}`);
+            await f(item.url, `threads_${(data && data.user) || user}_${name}`, { skipSaved: true });
           }
         });
       };
@@ -1841,7 +1870,9 @@ location.hostname.includes("facebook.com") &&
           missing++;
           continue;
         }
-        await scSaveUrl(photo.uri, `fb_${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`);
+        await scSaveUrl(photo.uri, `fb_${safeName(mediaOwner(scope, id))}_${safeName(fileNameOf(photo.uri))}`, {
+          skipSaved: true,
+        });
       }
       // Facebook lists at most a handful of photos for some posts (count > ids).
       const total = Math.max(group.count, group.ids.length);
@@ -2452,8 +2483,9 @@ location.hostname.includes('instagram.com') && (() => {
     return `${username}_${sourceName}`;
   }
 
-  async function save(media) {
+  async function save(media, { skipSaved = false } = {}) {
     const name = makeFilename(media);
+    if (scSkipIfSaved(name, skipSaved)) return;
     // Obtain the media bytes, then download a Blob URL so `anchor.download` is
     // the filename authority (GM_download may ignore the name).
     // Tampermonkey's XHR supplies the cross-origin access formerly provided by
@@ -2480,6 +2512,7 @@ location.hostname.includes('instagram.com') && (() => {
     anchor.remove();
     // Large videos need time before the Blob URL can be released.
     setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+    scMarkSaved(name);
   }
 
   // ---- Feed / post / reel buttons ----
@@ -2731,7 +2764,7 @@ location.hostname.includes('instagram.com') && (() => {
     const id = await findMediaId(code, route);
     if (!id) throw new Error('Could not resolve Instagram media id');
     const parent = await mediaInfo(id);
-    for (const item of parent.carousel_media || [parent]) await save(toDownload(item, parent));
+    for (const item of parent.carousel_media || [parent]) await save(toDownload(item, parent), { skipSaved: true });
   }
 
   // Overlay buttons for the story viewer and grid tiles.
@@ -2955,7 +2988,7 @@ location.hostname.endsWith("tiktok.com") &&
           const url = image.imageURL && image.imageURL.urlList && image.imageURL.urlList[0];
           if (!url) continue;
           const ext = (new URL(url).pathname.match(/\.(jpe?g|png|webp|heic)/i) || [, "jpg"])[1].toLowerCase();
-          await scSaveUrl(url, `tt_${user}_${item.id}_${index + 1}.${ext}`);
+          await scSaveUrl(url, `tt_${user}_${item.id}_${index + 1}.${ext}`, { skipSaved: images.length > 1 });
         }
         return;
       }

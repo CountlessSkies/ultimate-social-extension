@@ -86,7 +86,27 @@ async function scFetchBlob(url, { referer } = {}) {
     }),
   );
 }
-async function scSaveUrl(url, name, options) {
+// ---- Download history ----
+// Every saved file name is remembered in GM storage (one key per name). Our
+// names are stable per media (<prefix><user>_<media id or CDN name>), so a
+// known name means the file was downloaded before. Jobs that save several
+// files (whole post, photo set) pass `skipSaved` and skip those; a click on
+// one item always downloads. scRun reports the skip count of its job (jobs
+// run one at a time in the queue, so one counter is enough).
+var scSkipped = 0;
+var scHistoryKey = (name) => `dl:${String(name).toLowerCase()}`;
+var scWasSaved = (name) => !!GM_getValue(scHistoryKey(name), 0);
+var scMarkSaved = (name) => GM_setValue(scHistoryKey(name), Date.now());
+// True when the file should be skipped (and counts it).
+function scSkipIfSaved(name, skipSaved) {
+  if (!skipSaved || !scWasSaved(name)) return false;
+  scSkipped++;
+  return true;
+}
+
+// Returns false when skipped by `skipSaved`.
+async function scSaveUrl(url, name, options = {}) {
+  if (scSkipIfSaved(name, options.skipSaved)) return false;
   const blobUrl = URL.createObjectURL(await scFetchBlob(url, options));
   const a = document.createElement("a");
   a.href = blobUrl;
@@ -97,6 +117,8 @@ async function scSaveUrl(url, name, options) {
   a.remove();
   // Large videos need time before the Blob URL can be released.
   setTimeout(() => URL.revokeObjectURL(blobUrl), 6e4);
+  scMarkSaved(name);
+  return true;
 }
 
 // ---- Button design kit ----
@@ -178,9 +200,16 @@ function scQueue(job) {
 async function scRun(button, job, { queue = true } = {}) {
   if (button.dataset.state === "loading") return;
   scSetState(button, "loading");
+  const counted = async () => {
+    scSkipped = 0;
+    await job();
+    return scSkipped;
+  };
   try {
-    await (queue ? scQueue(job) : job());
-    scSetState(button, "done");
+    // Unqueued jobs (quick save) save no files and must not reset the
+    // counter of the download running in the queue.
+    const skipped = queue ? await scQueue(counted) : (await job(), 0);
+    scSetState(button, "done", skipped ? `Xong — bỏ qua ${skipped} file đã tải trước đó` : undefined);
   } catch (err) {
     scSetState(button, "error", `Lỗi: ${err instanceof Error ? err.message : String(err)}`);
     console.error(SC_TAG, err);
