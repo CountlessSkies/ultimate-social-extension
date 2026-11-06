@@ -17,6 +17,63 @@ location.hostname.includes('instagram.com') && (() => {
   const mediaIdCache = new Map();
   const mediaInfoCache = new Map();
 
+  // ---- Ghost mode: watch stories without being listed as a viewer ----
+  // Instagram reports a viewed story through the GraphQL mutations
+  // PolarisAPIReelSeenMutation / PolarisAPIForceStorySeenMutation (names
+  // found in its bundles) or the older REST /stories/reel/seen and
+  // /media/seen endpoints. While ghost mode is on those requests are not
+  // sent and get a fake 200 answer, so the viewer behaves normally. DM read
+  // receipts travel over the realtime socket and are not covered.
+  let ghost = !!GM_getValue('ig:ghost', false);
+  const SEEN_NAME_RE = /(?:Reel|Story)Seen|StoriesV\d*Seen|MarkSeen/i;
+  const SEEN_URL_RE = /\/api\/v\d\/(?:stories\/reel\/seen|media\/seen)/;
+  const FAKE_BODY = '{"data":{},"status":"ok"}';
+  const bodyText = (body) => {
+    if (typeof body === 'string') return body;
+    if (body && typeof body.toString === 'function' && String(body) !== '[object FormData]') return String(body);
+    try { return body && body.get ? `fb_api_req_friendly_name=${body.get('fb_api_req_friendly_name') || ''}` : ''; } catch (_) { return ''; }
+  };
+  const isSeenRequest = (url, body, friendlyName) => {
+    if (SEEN_URL_RE.test(url)) return true;
+    if (!/graphql/.test(url)) return false;
+    const name = friendlyName || (bodyText(body).match(/fb_api_req_friendly_name=([^&]+)/) || [])[1] || '';
+    return SEEN_NAME_RE.test(decodeURIComponent(name));
+  };
+  (() => {
+    const page = unsafeWindow;
+    if (page.__scIgGhostHook) return;
+    page.__scIgGhostHook = true;
+    const proto = page.XMLHttpRequest.prototype;
+    const { open, send, setRequestHeader } = proto;
+    proto.open = function (method, url, ...rest) {
+      this.__scUrl = String(url);
+      this.__scName = '';
+      return open.call(this, method, url, ...rest);
+    };
+    proto.setRequestHeader = function (name, value) {
+      if (/^x-fb-friendly-name$/i.test(name)) this.__scName = String(value);
+      return setRequestHeader.call(this, name, value);
+    };
+    proto.send = function (body) {
+      if (!ghost || !isSeenRequest(this.__scUrl || '', body, this.__scName)) return send.call(this, body);
+      const response = this.responseType === 'json' ? JSON.parse(FAKE_BODY) : FAKE_BODY;
+      const values = { readyState: 4, status: 200, statusText: 'OK', responseText: FAKE_BODY, response, responseURL: this.__scUrl };
+      for (const [key, value] of Object.entries(values)) Object.defineProperty(this, key, { value, configurable: true });
+      setTimeout(() => ['readystatechange', 'load', 'loadend'].forEach((type) => this.dispatchEvent(new page.Event(type))), 0);
+      console.info(SC_TAG, 'Ghost mode: blocked', this.__scName || this.__scUrl);
+    };
+    const pageFetch = page.fetch.bind(page);
+    page.fetch = function (input, init) {
+      const url = typeof input === 'string' ? input : input instanceof page.URL ? input.href : (input && input.url) || '';
+      const headers = new page.Headers((init && init.headers) || (input && input.headers) || {});
+      if (ghost && isSeenRequest(url, init && init.body, headers.get('x-fb-friendly-name'))) {
+        console.info(SC_TAG, 'Ghost mode: blocked', url);
+        return Promise.resolve(new page.Response(FAKE_BODY, { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return pageFetch(input, init);
+    };
+  })();
+
   const parentAt = (node, levels) => {
     let result = node;
     while (levels-- && result) result = result.parentElement;
@@ -631,10 +688,45 @@ location.hostname.includes('instagram.com') && (() => {
     button.style.top = r ? `${Math.round(r.top + 92)}px` : '';
     button.style.right = button.style.bottom = r ? 'auto' : '';
   }
+  // Ghost mode toggle, under the story download button. The choice is kept,
+  // so once on, the first story opened next time is not reported either.
+  const GHOST_TITLES = {
+    on: 'Ẩn danh: BẬT — chủ story không thấy bạn đã xem (bấm để tắt)',
+    off: 'Ẩn danh: TẮT — bấm để xem story mà không hiện tên trong danh sách người xem',
+  };
+  function paintGhostButton(button) {
+    scSetIcon(button, ghost ? 'eye-off' : 'eye', ghost ? GHOST_TITLES.on : GHOST_TITLES.off);
+    button.toggleAttribute('data-active', ghost);
+  }
+  function syncGhostButton(storyButton) {
+    let button = document.getElementById('sc-ig-ghost');
+    if (!storyButton) return void button?.remove();
+    if (!button) {
+      button = scButton('overlay', 'eye', GHOST_TITLES.off);
+      button.id = 'sc-ig-ghost';
+      ['pointerdown', 'mousedown', 'dblclick'].forEach((type) =>
+        button.addEventListener(type, (e) => (e.preventDefault(), e.stopPropagation()), true));
+      button.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ghost = !ghost;
+        GM_setValue('ig:ghost', ghost);
+        paintGhostButton(button);
+      }, true);
+      paintGhostButton(button);
+      document.body.append(button);
+    }
+    button.style.left = storyButton.style.left;
+    button.style.top = storyButton.style.top ? `${parseInt(storyButton.style.top, 10) + 42}px` : '';
+    button.style.right = storyButton.style.right;
+    button.style.bottom = storyButton.style.bottom;
+  }
+
   function syncStoryButton() {
     let button = document.getElementById('sc-ig-page-dl');
     if (!location.pathname.startsWith('/stories/')) {
       if (button) clearInterval(button.scTimer), button.remove();
+      syncGhostButton(null);
       return;
     }
     if (!button) {
@@ -642,9 +734,10 @@ location.hostname.includes('instagram.com') && (() => {
       button.id = 'sc-ig-page-dl';
       document.body.append(button);
       // The story viewer animates between items without DOM-wide mutations.
-      button.scTimer = setInterval(() => placeStoryButton(button), 500);
+      button.scTimer = setInterval(() => (placeStoryButton(button), syncGhostButton(button)), 500);
     }
     placeStoryButton(button);
+    syncGhostButton(button);
   }
 
   function decorateGrid() {
@@ -723,7 +816,8 @@ location.hostname.includes('instagram.com') && (() => {
 
   // Look comes from the shared kit; only placement is set here.
   GM_addStyle(
-    '.sc-ov.sc-ig-grid{left:8px;top:8px}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646}',
+    '.sc-ov.sc-ig-grid{left:8px;top:8px}#sc-ig-page-dl{position:fixed;right:74px;bottom:22px;z-index:2147483646}' +
+      `#sc-ig-ghost{position:fixed;right:74px;bottom:64px;z-index:2147483646}#sc-ig-ghost[data-active]{background:${SC_ACCENT}!important;border-color:${SC_ACCENT}!important}`,
   );
 
   scWatchDom(() => {
