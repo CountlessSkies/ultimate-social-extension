@@ -25,6 +25,10 @@ if (-not (Test-Path $ytg)) {
 # use the real settings (folder, quality) here.
 Remove-Item Env:YTDLP_GUI_SETTINGS -ErrorAction SilentlyContinue
 
+# Show where the file goes ("folder <path>" is the first line of ytg config).
+$folder = (& $ytg config 2>$null | Select-Object -First 1) -replace '^\s*folder\s+', ''
+Write-Host "Luu vao: $folder"
+
 & $ytg $link
 if ($LASTEXITCODE -ne 0) {
   Read-Host "ytg bao loi (ma $LASTEXITCODE). Enter de dong"
