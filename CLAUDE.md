@@ -53,7 +53,7 @@ Each module hooks the page's `fetch` / XHR via `unsafeWindow` at `document-start
 - **Instagram:** `i.instagram.com/api/v1/media/{id}/info/` via GM_xmlhttpRequest. The feed/post logic is ported from `D:/AgentWorks/ig-download`; read its `ARCHITECTURE.md` before changing carousel slide resolution or naming.
 - **Threads:** the page JSON plus GraphQL (`carousel_media`, `video_dash_manifest`).
 - **TikTok:** `__UNIVERSAL_DATA_FOR_REHYDRATION__` plus the `item_list` / `search` / `item/detail` / `related` API responses. Video downloads use the largest `bitrateInfo` stream.
-- **YouTube:** no direct download (adaptive streams need SABR). The button opens `ytg:<url-encoded link>`; `tools/ytg/ytg-protocol.reg` (run once by the user, HKCU only) maps that scheme to `tools/ytg/ytg-handler.ps1`, which accepts only http(s) links and runs `D:AgentWorksyt-dlp-guieleaseytg.exe <link>` in a console. YouTube enforces Trusted Types, so never assign HTML strings (`innerHTML`) in code that runs there; `scIcon` builds SVG with DOM calls.
+- **YouTube:** no direct download (adaptive streams need SABR). The button opens `ytg:<url-encoded link>`; `tools/ytg/ytg-protocol.reg` (run once by the user, HKCU only) maps that scheme to `tools/ytg/ytg-handler.ps1`, which accepts only http(s) links and runs `D:/AgentWorks/yt-dlp-gui/release/ytg.exe <link>` in a console. YouTube enforces Trusted Types, so never assign HTML strings (`innerHTML`) in code that runs there; `scIcon` builds SVG with DOM calls.
 
 ### Conventions the user cares about
 
