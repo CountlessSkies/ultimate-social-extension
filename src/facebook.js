@@ -522,9 +522,112 @@ location.hostname.includes("facebook.com") &&
       if (!url || !/^https?:/.test(url)) throw new Error("Chưa lấy được link ảnh");
       await scSaveUrl(url, `fb_${safeName(mediaOwner(scope, fbid))}_${safeName(fileNameOf(url))}`);
     }
+    // Photos Facebook leaves out of a post (the "+N" tile): the photo viewer's
+    // own query (CometPhotoRootContentQuery with the post's pcb.<post id>
+    // mediaset) answers one photo at full size plus the id of the next one, so
+    // the set is walked from its last known photo until every photo is known.
+    // The doc id and provided variables come from the page's module registry
+    // (loaded on feed and post pages), the tokens from DTSGInitialData / LSD.
+    const pageRequire = (name) => {
+      try {
+        return unsafeWindow.require(name);
+      } catch {
+        return null;
+      }
+    };
+    async function viewerPhoto(nodeID, mediasetToken) {
+      const op = pageRequire("CometPhotoRootContentQuery$Parameters");
+      const dtsg = pageRequire("DTSGInitialData")?.token;
+      const lsd = pageRequire("LSD")?.token;
+      const user = pageRequire("CurrentUserInitialData")?.USER_ID || "0";
+      if (!op?.params?.id || !dtsg || !lsd) throw new Error("Không đọc được truy vấn ảnh của Facebook");
+      const provided = {};
+      for (const [key, provider] of Object.entries(op.params.providedVariables || {})) {
+        try {
+          provided[key] = typeof provider.get === "function" ? provider.get() : provider;
+        } catch {}
+      }
+      const variables = {
+        isMediaset: true,
+        renderLocation: "comet_media_viewer",
+        nodeID,
+        mediasetToken,
+        scale: 1,
+        feedLocation: "COMET_MEDIA_VIEWER",
+        feedbackSource: 65,
+        focusCommentID: null,
+        useDefaultActor: false,
+        shouldShowComments: false,
+        ...provided,
+      };
+      const body = new URLSearchParams({
+        av: user,
+        __user: user,
+        __a: "1",
+        fb_dtsg: dtsg,
+        jazoest: `2${[...dtsg].reduce((sum, c) => sum + c.charCodeAt(0), 0)}`,
+        lsd,
+        fb_api_caller_class: "RelayModern",
+        fb_api_req_friendly_name: op.params.name,
+        server_timestamps: "true",
+        variables: JSON.stringify(variables),
+        doc_id: op.params.id,
+      }).toString();
+      const res = await fetch("/api/graphql/", {
+        method: "POST",
+        body,
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-FB-LSD": lsd, "X-FB-Friendly-Name": op.params.name },
+      });
+      let media = null;
+      try {
+        media = JSON.parse((await res.text()).replace(/^for \(;;\);/, "").split("\n")[0])?.data?.currMedia;
+      } catch {}
+      if (!media?.image?.uri) throw new Error(`Facebook không trả ảnh ${nodeID}`);
+      return {
+        id: String(media.id),
+        uri: media.image.uri,
+        ownerId: media.owner && media.owner.id,
+        next: media.default_mediaset?.nextMedia?.edges?.[0]?.node?.id || null,
+      };
+    }
+    function mediasetTokenOf(scope) {
+      for (const link of scope.querySelectorAll('a[href*="set=pcb."]')) {
+        const token = (link.href.match(/set=(pcb\.\d+)/) || [])[1];
+        if (token) return token;
+      }
+      return (location.href.match(/set=(pcb\.\d+)/) || [])[1] || null;
+    }
+    async function fillHiddenPhotos(group, scope) {
+      const token = mediasetTokenOf(scope);
+      if (!token) return;
+      const total = Math.max(group.count, group.ids.length);
+      const start = group.ids[group.ids.length - 1];
+      let next = (await viewerPhoto(start, token)).next;
+      for (let steps = 0; next && String(next) !== start && group.ids.length < total && steps < total + 2; steps++) {
+        await scSleep(300);
+        const photo = await viewerPhoto(String(next), token);
+        if (!group.ids.includes(photo.id)) {
+          photos.set(photo.id, { uri: photo.uri, ownerId: photo.ownerId });
+          group.ids.push(photo.id);
+          photoGroups.set(photo.id, group);
+        }
+        next = photo.next;
+      }
+    }
+
     // All photos of a post, one after another; reports any it had no data for.
     async function downloadSet(group, scope) {
       scanPageData();
+      let hiddenError = null;
+      if (Math.max(group.count, group.ids.length) > group.ids.length) {
+        try {
+          await fillHiddenPhotos(group, scope);
+        } catch (err) {
+          hiddenError = err;
+          console.warn(SC_TAG, "Hidden photos:", err);
+        }
+      }
       let missing = 0;
       for (const id of group.ids) {
         const photo = photos.get(id);
@@ -539,7 +642,10 @@ location.hostname.includes("facebook.com") &&
       // Facebook lists at most a handful of photos for some posts (count > ids).
       const total = Math.max(group.count, group.ids.length);
       if (missing || total > group.ids.length)
-        throw new Error(`Tải được ${group.ids.length - missing}/${total} ảnh — phần còn lại Facebook chưa gửi dữ liệu`);
+        throw new Error(
+          `Tải được ${group.ids.length - missing}/${total} ảnh — phần còn lại Facebook chưa gửi dữ liệu` +
+            (hiddenError ? ` (${hiddenError.message})` : ""),
+        );
     }
     // The photo group of a post: looked up from any of its photo links.
     function postGroupOf(scope) {
