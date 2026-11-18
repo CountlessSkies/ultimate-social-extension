@@ -272,19 +272,37 @@ location.hostname.includes("facebook.com") &&
         .sort((a, b) => b.r.width * b.r.height - a.r.width * a.r.height)
         .map((x) => x.el);
 
+    // Moving to the next story can leave the previous card mounted at the same
+    // size and place, faded out or stacked underneath; the largest element
+    // alone may then be the previous story. Only elements actually shown count,
+    // and of overlapping ones the topmost wins.
+    function isShown(el) {
+      for (let node = el; node && node !== document.body; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) < 0.05) return false;
+      }
+      return true;
+    }
+    function topmost(candidates) {
+      const shown = largestFirst(candidates.filter(isShown));
+      if (shown.length < 2) return shown[0];
+      const r = shown[0].getBoundingClientRect();
+      const stack = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return stack.map((hit) => shown.find((el) => el === hit || el.contains(hit))).find(Boolean) || shown[0];
+    }
     // The story currently on screen: its video player, video and/or image.
     function currentStory() {
-      const player = largestFirst([...document.querySelectorAll('[aria-label="Video player"]')].filter(inViewport))[0];
-      const video = (player && player.querySelector("video")) || largestFirst([...document.querySelectorAll("video")].filter(inViewport))[0];
+      const player = topmost([...document.querySelectorAll('[aria-label="Video player"]')].filter(inViewport));
+      const video = (player && player.querySelector("video")) || topmost([...document.querySelectorAll("video")].filter(inViewport));
       const image =
         player || video
           ? undefined
-          : largestFirst(
+          : topmost(
               [...document.querySelectorAll("img")].filter((img) => {
                 const r = img.getBoundingClientRect();
                 return inViewport(img) && r.width >= 250 && r.height >= 300 && r.left > 0.25 * innerWidth && !/profile picture|avatar/i.test(img.alt);
               }),
-            )[0];
+            );
       return { player, video, image, box: player || video || image };
     }
 
@@ -429,10 +447,15 @@ location.hostname.includes("facebook.com") &&
       return `fb_${safeName(username || bucket || "unknown")}_${safeName(/\.[a-z0-9]{2,5}$/i.test(name) ? name : `${cardId || "media"}.${ext}`)}`;
     }
 
-    async function downloadStory() {
+    // The story and its file name are read at click time; the save itself may
+    // wait in the download queue while the viewer moves on to the next story.
+    function storyDownloadJob() {
       const media = storyMedia();
-      if (!media) throw new Error("Chưa lấy được link Story");
-      await scSaveUrl(media.url, storyFilename(media.url, media.ext, media.box, media.videoId));
+      const name = media && storyFilename(media.url, media.ext, media.box, media.videoId);
+      return async () => {
+        if (!media) throw new Error("Chưa lấy được link Story");
+        await scSaveUrl(media.url, name);
+      };
     }
 
     function syncStoryButton() {
@@ -446,7 +469,7 @@ location.hostname.includes("facebook.com") &&
         button.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          scRun(button, downloadStory);
+          scRun(button, storyDownloadJob());
         });
         document.body.append(button);
       }

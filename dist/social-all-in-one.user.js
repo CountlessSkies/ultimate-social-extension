@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.11.18.2124
+// @version      2026.11.18.2149
 // @description  Media download and quick save for Facebook, Instagram, Threads, TikTok and YouTube.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -1662,19 +1662,37 @@ location.hostname.includes("facebook.com") &&
         .sort((a, b) => b.r.width * b.r.height - a.r.width * a.r.height)
         .map((x) => x.el);
 
+    // Moving to the next story can leave the previous card mounted at the same
+    // size and place, faded out or stacked underneath; the largest element
+    // alone may then be the previous story. Only elements actually shown count,
+    // and of overlapping ones the topmost wins.
+    function isShown(el) {
+      for (let node = el; node && node !== document.body; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) < 0.05) return false;
+      }
+      return true;
+    }
+    function topmost(candidates) {
+      const shown = largestFirst(candidates.filter(isShown));
+      if (shown.length < 2) return shown[0];
+      const r = shown[0].getBoundingClientRect();
+      const stack = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return stack.map((hit) => shown.find((el) => el === hit || el.contains(hit))).find(Boolean) || shown[0];
+    }
     // The story currently on screen: its video player, video and/or image.
     function currentStory() {
-      const player = largestFirst([...document.querySelectorAll('[aria-label="Video player"]')].filter(inViewport))[0];
-      const video = (player && player.querySelector("video")) || largestFirst([...document.querySelectorAll("video")].filter(inViewport))[0];
+      const player = topmost([...document.querySelectorAll('[aria-label="Video player"]')].filter(inViewport));
+      const video = (player && player.querySelector("video")) || topmost([...document.querySelectorAll("video")].filter(inViewport));
       const image =
         player || video
           ? undefined
-          : largestFirst(
+          : topmost(
               [...document.querySelectorAll("img")].filter((img) => {
                 const r = img.getBoundingClientRect();
                 return inViewport(img) && r.width >= 250 && r.height >= 300 && r.left > 0.25 * innerWidth && !/profile picture|avatar/i.test(img.alt);
               }),
-            )[0];
+            );
       return { player, video, image, box: player || video || image };
     }
 
@@ -1819,10 +1837,15 @@ location.hostname.includes("facebook.com") &&
       return `fb_${safeName(username || bucket || "unknown")}_${safeName(/\.[a-z0-9]{2,5}$/i.test(name) ? name : `${cardId || "media"}.${ext}`)}`;
     }
 
-    async function downloadStory() {
+    // The story and its file name are read at click time; the save itself may
+    // wait in the download queue while the viewer moves on to the next story.
+    function storyDownloadJob() {
       const media = storyMedia();
-      if (!media) throw new Error("Chưa lấy được link Story");
-      await scSaveUrl(media.url, storyFilename(media.url, media.ext, media.box, media.videoId));
+      const name = media && storyFilename(media.url, media.ext, media.box, media.videoId);
+      return async () => {
+        if (!media) throw new Error("Chưa lấy được link Story");
+        await scSaveUrl(media.url, name);
+      };
     }
 
     function syncStoryButton() {
@@ -1836,7 +1859,7 @@ location.hostname.includes("facebook.com") &&
         button.addEventListener("click", (e) => {
           e.preventDefault();
           e.stopPropagation();
-          scRun(button, downloadStory);
+          scRun(button, storyDownloadJob());
         });
         document.body.append(button);
       }
@@ -2643,20 +2666,32 @@ location.hostname.includes('instagram.com') && (() => {
     return Number.isInteger(index) && index >= 0 && index < total ? index : -1;
   }
 
-  function carouselIndex(article, parent) {
+  // What is on screen, read when the download is asked for. The media info
+  // request (and the download queue) can take seconds, and A/D or a swipe may
+  // move the carousel meanwhile, so nothing is read from the DOM afterwards.
+  function slideSnapshot(article) {
     const value = new URLSearchParams(location.search).get('img_index');
-    if (value) return Math.max(0, Number(value) - 1);
-    if (!(article instanceof Element)) return 0;
+    if (!(article instanceof Element)) return { urlIndex: value ? Math.max(0, Number(value) - 1) : 0, rendered: '' };
+    return {
+      urlIndex: value ? Math.max(0, Number(value) - 1) : -1,
+      indicatorIndex: carouselIndexFromIndicator(article, Infinity),
+      geometryIndex: carouselIndexFromGeometry(article),
+      sources: visibleMediaSources(article),
+      fallbackIndex: carouselIndexFromDots(article),
+      rendered: visibleMediaUrl(article),
+    };
+  }
 
-    const indicatorIndex = carouselIndexFromIndicator(article, parent?.carousel_media?.length || 0);
-    if (indicatorIndex >= 0) return indicatorIndex;
+  function carouselIndex(snapshot, parent) {
+    if (snapshot.urlIndex >= 0) return snapshot.urlIndex;
+    const total = parent?.carousel_media?.length || 0;
+    if (snapshot.indicatorIndex >= 0 && snapshot.indicatorIndex < total) return snapshot.indicatorIndex;
 
     // Fallback for layouts without semantic carousel indicators.
-    const geometryIndex = carouselIndexFromGeometry(article);
-    if (geometryIndex >= 0) return geometryIndex;
+    if (snapshot.geometryIndex >= 0) return snapshot.geometryIndex;
 
     // Fallback for layouts without carousel <li> slides.
-    const visibleSources = visibleMediaSources(article);
+    const visibleSources = snapshot.sources || [];
     if (visibleSources.length && parent?.carousel_media) {
       // Match each rendered source in area order. This handles a video slide
       // whose playable source is a blob while its poster is an API thumbnail.
@@ -2671,7 +2706,10 @@ location.hostname.includes('instagram.com') && (() => {
         if (match >= 0) return match;
       }
     }
+    return snapshot.fallbackIndex;
+  }
 
+  function carouselIndexFromDots(article) {
     // Exact carousel-dot routing used by the working original extension.
     const isPostView = location.pathname.startsWith('/p/');
     let dots = [];
@@ -2706,14 +2744,13 @@ location.hostname.includes('instagram.com') && (() => {
     return bestIndex >= 0 ? bestIndex : 0;
   }
 
-  async function resolvePostOrReel(article) {
-    const short = shortcodeFrom(article);
+  async function resolvePostOrReel(short, snapshot) {
     if (!short) throw new Error('Could not resolve post or reel code');
     const id = await findMediaId(short.code, short.route);
     if (!id) throw new Error('Could not resolve Instagram media id');
     const parent = await mediaInfo(id);
-    const item = parent.carousel_media ? parent.carousel_media[carouselIndex(article, parent)] || parent.carousel_media[0] : parent;
-    return toDownload(item, parent, visibleMediaUrl(article));
+    const item = parent.carousel_media ? parent.carousel_media[carouselIndex(snapshot, parent)] || parent.carousel_media[0] : parent;
+    return toDownload(item, parent, snapshot.rendered);
   }
 
   // <owner.username>_<original CDN file name>
@@ -2767,15 +2804,17 @@ location.hostname.includes('instagram.com') && (() => {
   async function startDownload(button) {
     if (!button) return;
     // Do not retain a custom DOM object on the button: Tampermonkey crosses
-    // an isolated-world boundary for such properties. Resolve it at click time.
+    // an isolated-world boundary for such properties. Resolve it at click time,
+    // before the job waits in the queue or for the API.
+    const scope = postScopeOf(button);
+    const short = shortcodeFrom(scope);
+    const snapshot = button.dataset.kind === 'all' ? null : slideSnapshot(scope);
     await scRun(button, async () => {
-      const scope = postScopeOf(button);
       if (button.dataset.kind === 'all') {
-        const short = shortcodeFrom(scope);
         if (!short) throw new Error('Could not resolve post or reel code');
         await downloadWholePost(short.code, short.route);
       } else {
-        await save(await resolvePostOrReel(scope));
+        await save(await resolvePostOrReel(short, snapshot));
       }
     });
   }
@@ -2976,15 +3015,28 @@ location.hostname.includes('instagram.com') && (() => {
     return fromFiber(video, (props) => walk(props, 0));
   }
 
-  async function resolveStory() {
+  // The story on screen, read at click time: stories advance on their own
+  // while the job waits in the download queue or for the API.
+  function storySnapshot() {
     const match = location.pathname.match(/^\/stories\/([^/]+)\/(\d+)?/);
-    if (!match) throw new Error('Không phải trang story.');
+    if (!match) return null;
     const isHighlight = match[1] === 'highlights';
-    const owner = isHighlight ? 'highlight' : match[1];
     const el = storyMediaEl();
     const urlPk = isHighlight ? location.pathname.match(/^\/stories\/highlights\/\d+\/(\d+)/)?.[1] : match[2];
-    const pk = (el && storyMediaPk(el)) || urlPk;
-    const rendered = el instanceof HTMLImageElement ? el.currentSrc || el.src : '';
+    const video = el instanceof HTMLVideoElement ? el : storyMediaEl('video');
+    return {
+      owner: isHighlight ? 'highlight' : match[1],
+      pk: (el && storyMediaPk(el)) || urlPk,
+      rendered: el instanceof HTMLImageElement ? el.currentSrc || el.src : '',
+      // A video story also renders its poster <img>: never save that instead.
+      videoUrl: video ? storyVideoUrl(video) : null,
+      isVideo: !!video,
+    };
+  }
+
+  async function resolveStory(snapshot) {
+    if (!snapshot) throw new Error('Không phải trang story.');
+    const { owner, pk, rendered } = snapshot;
     if (pk) {
       try {
         const item = await mediaInfo(pk);
@@ -2993,11 +3045,9 @@ location.hostname.includes('instagram.com') && (() => {
         console.warn(SC_TAG, 'story media info:', error);
       }
     }
-    // A video story also renders its poster <img>: never save that instead.
-    const video = el instanceof HTMLVideoElement ? el : storyMediaEl('video');
-    const url = video ? storyVideoUrl(video) : rendered;
+    const url = snapshot.isVideo ? snapshot.videoUrl : rendered;
     if (!url || url.startsWith('blob:')) throw new Error('Không lấy được link story.');
-    return { url, type: video ? 'video' : 'image', username: owner, id: pk || 'story', sourceName: filenameFromUrl(url) };
+    return { url, type: snapshot.isVideo ? 'video' : 'image', username: owner, id: pk || 'story', sourceName: filenameFromUrl(url) };
   }
 
   // ---- Grid tiles (profile, explore, saved): the whole post ----
@@ -3009,7 +3059,9 @@ location.hostname.includes('instagram.com') && (() => {
   }
 
   // Overlay buttons for the story viewer and grid tiles.
-  function makeOverlayButton(icon, title, run) {
+  // `prepare` runs at click time; its result is handed to `run`, which may
+  // wait in the download queue first.
+  function makeOverlayButton(icon, title, run, prepare = () => undefined) {
     const button = scButton('overlay', icon, title);
     const stop = (e) => {
       e.preventDefault();
@@ -3018,7 +3070,8 @@ location.hostname.includes('instagram.com') && (() => {
     ['pointerdown', 'mousedown', 'dblclick'].forEach((type) => button.addEventListener(type, stop, true));
     button.addEventListener('click', (e) => {
       stop(e);
-      scRun(button, run);
+      const prepared = prepare();
+      scRun(button, () => run(prepared));
     }, true);
     return button;
   }
@@ -3073,7 +3126,7 @@ location.hostname.includes('instagram.com') && (() => {
       return;
     }
     if (!button) {
-      button = makeOverlayButton('download', 'Tải story này (S)', async () => save(await resolveStory()));
+      button = makeOverlayButton('download', 'Tải story này (S)', async (snapshot) => save(await resolveStory(snapshot)), storySnapshot);
       button.id = 'sc-ig-page-dl';
       document.body.append(button);
       // The story viewer animates between items without DOM-wide mutations.
@@ -3112,12 +3165,11 @@ location.hostname.includes('instagram.com') && (() => {
     const existing = host.querySelector(':scope > .sc-ig-avatar');
     if (existing) return void (existing.dataset.user = username);
     if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
-    const button = makeOverlayButton('download', 'Tải ảnh đại diện (HD)', async () => {
-      const user = button.dataset.user;
+    const button = makeOverlayButton('download', 'Tải ảnh đại diện (HD)', async (user) => {
       const url = profilePics.get(user.toLowerCase());
       if (!url) throw new Error('Chưa có dữ liệu ảnh đại diện — tải lại trang profile rồi thử lại');
       await save({ url, type: 'image', username: user, id: user, sourceName: filenameFromUrl(url) });
-    });
+    }, () => button.dataset.user);
     button.classList.add('sc-ig-avatar');
     button.dataset.user = username;
     host.append(button);
