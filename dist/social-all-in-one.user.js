@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.11.18.2117
+// @version      2026.11.18.2124
 // @description  Media download and quick save for Facebook, Instagram, Threads, TikTok and YouTube.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -3479,18 +3479,32 @@ location.hostname.endsWith("youtube.com") &&
       if (row && !row.querySelector(".sc-yt")) row.append(ytgButton("sc-yt-watch"));
       // Shorts: first in each reel's action column (only the active reel is
       // on screen; the link is read from the URL at click time).
+      // Like YouTube's own items: a round button with a label underneath.
       document.querySelectorAll("reel-action-bar-view-model").forEach((bar) => {
-        if (!bar.querySelector(".sc-yt")) bar.prepend(ytgButton("sc-yt-shorts"));
+        if (bar.querySelector(".sc-yt")) return;
+        const item = document.createElement("div");
+        item.className = "sc-yt-item";
+        const label = document.createElement("span");
+        label.textContent = "Tải";
+        item.append(ytgButton("sc-yt-shorts"), label);
+        bar.prepend(item);
       });
     }
 
-    // YouTube's own buttons: 36 px grey pills on watch pages, 48 px circles on Shorts.
+    // Measured from YouTube's own buttons: 36 px grey pills on watch pages;
+    // on Shorts 48 px circles (white 10 % fill, #f1f1f1 icon), a 12/18 px
+    // label 4 px below and 8 px to the next item.
     GM_addStyle(
-      ".sc-in.sc-yt{background:var(--yt-spec-badge-chip-background,rgba(127,127,127,.2))!important;color:var(--yt-spec-text-primary,currentColor)!important}" +
-        ".sc-in.sc-yt:hover{background:var(--yt-spec-10-percent-layer,rgba(127,127,127,.32))!important}" +
-        ".sc-in.sc-yt-watch{width:36px!important;height:36px!important;margin-left:8px!important}" +
-        ".sc-in.sc-yt-shorts{width:48px!important;height:48px!important;margin-bottom:16px!important}" +
-        ".sc-in.sc-yt .sc-icon{width:20px;height:20px}",
+      ".sc-in.sc-yt-watch{width:36px!important;height:36px!important;margin-left:8px!important;background:var(--yt-spec-badge-chip-background,rgba(127,127,127,.2))!important;color:var(--yt-spec-text-primary,currentColor)!important}" +
+        ".sc-in.sc-yt-watch:hover{background:var(--yt-spec-10-percent-layer,rgba(127,127,127,.32))!important}" +
+        ".sc-in.sc-yt-watch .sc-icon{width:20px;height:20px}" +
+        ".sc-yt-item{display:flex;flex-direction:column;align-items:center;padding-bottom:8px;color:#f1f1f1;font:12px/18px Roboto,Arial,sans-serif}" +
+        ".sc-yt-item>span{margin-top:4px}" +
+        ".sc-in.sc-yt-shorts{width:48px!important;height:48px!important;background:rgba(255,255,255,.1)!important;color:#f1f1f1!important}" +
+        ".sc-in.sc-yt-shorts:hover{background:rgba(255,255,255,.2)!important}" +
+        ".sc-in.sc-yt-shorts[data-state=done],.sc-in.sc-yt-watch[data-state=done]{color:#1d9e5f!important}" +
+        ".sc-in.sc-yt-shorts[data-state=error],.sc-in.sc-yt-watch[data-state=error]{color:#e0393e!important}" +
+        ".sc-in.sc-yt-shorts .sc-icon{width:24px;height:24px}",
     );
 
     scWatchDom(decorate);
