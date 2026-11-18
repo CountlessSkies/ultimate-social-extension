@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-"Social All-in-One": a single Tampermonkey userscript (plain JavaScript, no dependencies, no package.json) that adds media download and quick save/unsave buttons to Facebook, Instagram, Threads and TikTok.
+"Social All-in-One": a single Tampermonkey userscript (plain JavaScript, no dependencies, no package.json) that adds media download and quick save/unsave buttons to Facebook, Instagram, Threads and TikTok, plus a YouTube button that hands the link to an external downloader.
 
 ## Commands
 
@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-- `src/` files are concatenated in a fixed order: `shared.js`, `core.js`, `facebook.js`, `instagram.js`, `tiktok.js`. The order is set by the `SOURCES` array in the build script and must match the loader's `@require` order.
+- `src/` files are concatenated in a fixed order: `shared.js`, `core.js`, `facebook.js`, `instagram.js`, `tiktok.js`, `youtube.js`. The order is set by the `SOURCES` array in the build script and must match the loader's `@require` order.
 - In the local loader each file runs as a separate `@require`. So shared helpers in `shared.js` are top-level `var` / `function` declarations (prefixed `sc`), not `const`.
 - Each site module is an IIFE gated by a hostname check (`location.hostname.includes(...) && (() => {...})()`).
 - `core.js` is an older file, partly minified (single-letter names). It holds:
@@ -53,6 +53,7 @@ Each module hooks the page's `fetch` / XHR via `unsafeWindow` at `document-start
 - **Instagram:** `i.instagram.com/api/v1/media/{id}/info/` via GM_xmlhttpRequest. The feed/post logic is ported from `D:/AgentWorks/ig-download`; read its `ARCHITECTURE.md` before changing carousel slide resolution or naming.
 - **Threads:** the page JSON plus GraphQL (`carousel_media`, `video_dash_manifest`).
 - **TikTok:** `__UNIVERSAL_DATA_FOR_REHYDRATION__` plus the `item_list` / `search` / `item/detail` / `related` API responses. Video downloads use the largest `bitrateInfo` stream.
+- **YouTube:** no direct download (adaptive streams need SABR). The button opens `ytg:<url-encoded link>`; `tools/ytg/ytg-protocol.reg` (run once by the user, HKCU only) maps that scheme to `tools/ytg/ytg-handler.ps1`, which accepts only http(s) links and runs `D:AgentWorksyt-dlp-guieleaseytg.exe <link>` in a console. YouTube enforces Trusted Types, so never assign HTML strings (`innerHTML`) in code that runs there; `scIcon` builds SVG with DOM calls.
 
 ### Conventions the user cares about
 

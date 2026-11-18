@@ -18,12 +18,13 @@ const header = `// ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
 // @version      ${version}
-// @description  Media download and quick save for Facebook, Instagram, Threads and TikTok.
+// @description  Media download and quick save for Facebook, Instagram, Threads, TikTok and YouTube.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
 // @match        https://*.threads.net/*
 // @match        https://*.threads.com/*
 // @match        https://*.tiktok.com/*
+// @match        https://*.youtube.com/*
 // @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -45,7 +46,7 @@ const header = `// ==UserScript==
 `;
 
 // Order matters: shared.js defines helpers the other files use.
-const SOURCES = ["shared.js", "core.js", "facebook.js", "instagram.js", "tiktok.js"];
+const SOURCES = ["shared.js", "core.js", "facebook.js", "instagram.js", "tiktok.js", "youtube.js"];
 const bundle = SOURCES.map((file) => readFileSync(`${root}src/${file}`, "utf8")).join("\n");
 writeFileSync(`${root}dist/social-all-in-one.bundle.js`, bundle);
 writeFileSync(`${root}dist/social-all-in-one.user.js`, `${header}\n${bundle}`);

@@ -403,7 +403,7 @@
   }
   function _() {
     const n = document.createElement("button");
-    (n.id = "sc-launcher"), (n.innerHTML = scIcon("bolt")), (n.title = "Social All-in-One");
+    (n.id = "sc-launcher"), n.replaceChildren(scIcon("bolt")), (n.title = "Social All-in-One");
     const o = document.createElement("section");
     (o.id = "sc-panel"),
       (o.hidden = !0),

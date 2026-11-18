@@ -8,6 +8,7 @@
 // @match        https://*.threads.net/*
 // @match        https://*.threads.com/*
 // @match        https://*.tiktok.com/*
+// @match        https://*.youtube.com/*
 // @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -28,6 +29,7 @@
 // @require      file:///D:/AgentWorks/ultimate-social-extension/src/facebook.js
 // @require      file:///D:/AgentWorks/ultimate-social-extension/src/instagram.js
 // @require      file:///D:/AgentWorks/ultimate-social-extension/src/tiktok.js
+// @require      file:///D:/AgentWorks/ultimate-social-extension/src/youtube.js
 // ==/UserScript==
 
 // The implementation is loaded straight from the workspace sources above, in

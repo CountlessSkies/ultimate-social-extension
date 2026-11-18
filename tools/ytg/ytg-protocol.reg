@@ -1,0 +1,12 @@
+Windows Registry Editor Version 5.00
+
+; Registers the ytg: link scheme for the current user only (no admin rights).
+; Opening ytg:<url-encoded link> runs ytg-handler.ps1, which starts ytg.exe.
+; Remove with: reg delete HKCU\Software\Classes\ytg /f
+
+[HKEY_CURRENT_USER\Software\Classes\ytg]
+@="URL:ytg (yt-dlp-gui command line)"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\ytg\shell\open\command]
+@="powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"D:\\AgentWorks\\ultimate-social-extension\\tools\\ytg\\ytg-handler.ps1\" \"%1\""

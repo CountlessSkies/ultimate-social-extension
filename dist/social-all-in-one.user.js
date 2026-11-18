@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.11.18.2057
-// @description  Media download and quick save for Facebook, Instagram, Threads and TikTok.
+// @version      2026.11.18.2117
+// @description  Media download and quick save for Facebook, Instagram, Threads, TikTok and YouTube.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
 // @match        https://*.threads.net/*
 // @match        https://*.threads.com/*
 // @match        https://*.tiktok.com/*
+// @match        https://*.youtube.com/*
 // @run-at       document-start
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -174,10 +175,29 @@ var SC_ICONS = {
     '<path d="M10.585 10.587a2 2 0 0 0 2.829 2.828"/><path d="M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87"/><path d="M3 3l18 18"/>',
 };
 // "<name>-filled" draws the same outline filled (e.g. a saved bookmark).
+// Built with DOM calls, not an HTML string: YouTube enforces Trusted Types,
+// which rejects innerHTML strings.
 var scIcon = (name) => {
   const filled = name.endsWith("-filled");
-  const path = SC_ICONS[filled ? name.slice(0, -7) : name];
-  return `<svg class="sc-icon" viewBox="0 0 24 24" fill="${filled ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  const attrs = {
+    class: "sc-icon",
+    viewBox: "0 0 24 24",
+    fill: filled ? "currentColor" : "none",
+    stroke: "currentColor",
+    "stroke-width": "2",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+    "aria-hidden": "true",
+  };
+  for (const [key, value] of Object.entries(attrs)) svg.setAttribute(key, value);
+  for (const [, d] of SC_ICONS[filled ? name.slice(0, -7) : name].matchAll(/<path d="([^"]+)"\/>/g)) {
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
 };
 
 // `style` is "overlay" or "inline"; `small` makes an inline button match 20px
@@ -190,7 +210,7 @@ function scButton(style, icon, title, { small = false } = {}) {
   button.dataset.label = title;
   button.title = title;
   button.setAttribute("aria-label", title);
-  button.innerHTML = scIcon(icon);
+  button.replaceChildren(scIcon(icon));
   return button;
 }
 
@@ -206,12 +226,12 @@ function scSetState(button, state, message) {
   clearTimeout(scResetTimers.get(button));
   if (state === "idle") {
     delete button.dataset.state;
-    button.innerHTML = scIcon(button.dataset.icon);
+    button.replaceChildren(scIcon(button.dataset.icon));
     button.title = button.dataset.label;
     return;
   }
   button.dataset.state = state;
-  button.innerHTML = scIcon({ loading: "loader", done: "check", error: "x" }[state]);
+  button.replaceChildren(scIcon({ loading: "loader", done: "check", error: "x" }[state]));
   button.title = message || { loading: "Đang tải…", done: "Xong", error: "Có lỗi" }[state];
   if (state !== "loading")
     scResetTimers.set(button, setTimeout(() => scSetState(button, "idle"), state === "error" ? 6000 : 1800));
@@ -689,7 +709,7 @@ function scBestDashVideo(xml) {
   }
   function _() {
     const n = document.createElement("button");
-    (n.id = "sc-launcher"), (n.innerHTML = scIcon("bolt")), (n.title = "Social All-in-One");
+    (n.id = "sc-launcher"), n.replaceChildren(scIcon("bolt")), (n.title = "Social All-in-One");
     const o = document.createElement("section");
     (o.id = "sc-panel"),
       (o.hidden = !0),
@@ -3412,4 +3432,66 @@ location.hostname.endsWith("tiktok.com") &&
       decorateBrowse();
       decorateTiles();
     });
+  })();
+
+// YouTube: a download button on the watch page and on Shorts that hands the
+// link to ytg.exe (D:/AgentWorks/yt-dlp-gui), the command-line twin of the
+// yt-dlp GUI. A browser cannot start programs, so the button opens
+// ytg:<url-encoded link>; Windows runs tools/ytg/ytg-handler.ps1 for that
+// scheme (registered once with tools/ytg/ytg-protocol.reg), which starts
+// ytg in a console window showing the progress. Quality and folder come from
+// ytg's own settings.
+location.hostname.endsWith("youtube.com") &&
+  (() => {
+    "use strict";
+
+    // The video on screen, as a clean link: watch?v=<id> or shorts/<id>.
+    function currentVideoUrl() {
+      const shorts = location.pathname.match(/^\/shorts\/([\w-]{6,})/);
+      if (shorts) return `https://www.youtube.com/shorts/${shorts[1]}`;
+      const id = new URLSearchParams(location.search).get("v");
+      return id ? `https://www.youtube.com/watch?v=${id}` : null;
+    }
+
+    function ytgButton(extraClass) {
+      const button = scButton("inline", "download", "Tải bằng ytg (yt-dlp)");
+      button.classList.add("sc-yt", extraClass);
+      button.addEventListener(
+        "click",
+        (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const url = currentVideoUrl();
+          if (!url) return void scSetState(button, "error", "Không thấy link video");
+          // Chrome asks once whether to open ytg; nothing reports back, so
+          // the button only confirms that the link was handed over.
+          location.href = `ytg:${encodeURIComponent(url)}`;
+          scSetState(button, "done", "Đã gửi sang ytg — xem tiến trình trong cửa sổ console");
+        },
+        true,
+      );
+      return button;
+    }
+
+    function decorate() {
+      // Watch page: after Like/Share in the row under the title.
+      const row = document.querySelector("ytd-watch-metadata #top-level-buttons-computed");
+      if (row && !row.querySelector(".sc-yt")) row.append(ytgButton("sc-yt-watch"));
+      // Shorts: first in each reel's action column (only the active reel is
+      // on screen; the link is read from the URL at click time).
+      document.querySelectorAll("reel-action-bar-view-model").forEach((bar) => {
+        if (!bar.querySelector(".sc-yt")) bar.prepend(ytgButton("sc-yt-shorts"));
+      });
+    }
+
+    // YouTube's own buttons: 36 px grey pills on watch pages, 48 px circles on Shorts.
+    GM_addStyle(
+      ".sc-in.sc-yt{background:var(--yt-spec-badge-chip-background,rgba(127,127,127,.2))!important;color:var(--yt-spec-text-primary,currentColor)!important}" +
+        ".sc-in.sc-yt:hover{background:var(--yt-spec-10-percent-layer,rgba(127,127,127,.32))!important}" +
+        ".sc-in.sc-yt-watch{width:36px!important;height:36px!important;margin-left:8px!important}" +
+        ".sc-in.sc-yt-shorts{width:48px!important;height:48px!important;margin-bottom:16px!important}" +
+        ".sc-in.sc-yt .sc-icon{width:20px;height:20px}",
+    );
+
+    scWatchDom(decorate);
   })();

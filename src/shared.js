@@ -145,10 +145,29 @@ var SC_ICONS = {
     '<path d="M10.585 10.587a2 2 0 0 0 2.829 2.828"/><path d="M16.681 16.673a8.717 8.717 0 0 1 -4.681 1.327c-3.6 0 -6.6 -2 -9 -6c1.272 -2.12 2.712 -3.678 4.32 -4.674m2.86 -1.146a9.055 9.055 0 0 1 1.82 -.18c3.6 0 6.6 2 9 6c-.666 1.11 -1.379 2.067 -2.138 2.87"/><path d="M3 3l18 18"/>',
 };
 // "<name>-filled" draws the same outline filled (e.g. a saved bookmark).
+// Built with DOM calls, not an HTML string: YouTube enforces Trusted Types,
+// which rejects innerHTML strings.
 var scIcon = (name) => {
   const filled = name.endsWith("-filled");
-  const path = SC_ICONS[filled ? name.slice(0, -7) : name];
-  return `<svg class="sc-icon" viewBox="0 0 24 24" fill="${filled ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  const attrs = {
+    class: "sc-icon",
+    viewBox: "0 0 24 24",
+    fill: filled ? "currentColor" : "none",
+    stroke: "currentColor",
+    "stroke-width": "2",
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+    "aria-hidden": "true",
+  };
+  for (const [key, value] of Object.entries(attrs)) svg.setAttribute(key, value);
+  for (const [, d] of SC_ICONS[filled ? name.slice(0, -7) : name].matchAll(/<path d="([^"]+)"\/>/g)) {
+    const path = document.createElementNS(NS, "path");
+    path.setAttribute("d", d);
+    svg.append(path);
+  }
+  return svg;
 };
 
 // `style` is "overlay" or "inline"; `small` makes an inline button match 20px
@@ -161,7 +180,7 @@ function scButton(style, icon, title, { small = false } = {}) {
   button.dataset.label = title;
   button.title = title;
   button.setAttribute("aria-label", title);
-  button.innerHTML = scIcon(icon);
+  button.replaceChildren(scIcon(icon));
   return button;
 }
 
@@ -177,12 +196,12 @@ function scSetState(button, state, message) {
   clearTimeout(scResetTimers.get(button));
   if (state === "idle") {
     delete button.dataset.state;
-    button.innerHTML = scIcon(button.dataset.icon);
+    button.replaceChildren(scIcon(button.dataset.icon));
     button.title = button.dataset.label;
     return;
   }
   button.dataset.state = state;
-  button.innerHTML = scIcon({ loading: "loader", done: "check", error: "x" }[state]);
+  button.replaceChildren(scIcon({ loading: "loader", done: "check", error: "x" }[state]));
   button.title = message || { loading: "Đang tải…", done: "Xong", error: "Có lỗi" }[state];
   if (state !== "loading")
     scResetTimers.set(button, setTimeout(() => scSetState(button, "idle"), state === "error" ? 6000 : 1800));
