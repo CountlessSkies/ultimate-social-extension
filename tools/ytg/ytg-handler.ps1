@@ -20,6 +20,11 @@ if (-not (Test-Path $ytg)) {
   exit 2
 }
 
+# ytg reads YTDLP_GUI_SETTINGS before the real settings file; test runs set it
+# to a scratch copy, and the browser can pass it on to this process. Always
+# use the real settings (folder, quality) here.
+Remove-Item Env:YTDLP_GUI_SETTINGS -ErrorAction SilentlyContinue
+
 & $ytg $link
 if ($LASTEXITCODE -ne 0) {
   Read-Host "ytg bao loi (ma $LASTEXITCODE). Enter de dong"
