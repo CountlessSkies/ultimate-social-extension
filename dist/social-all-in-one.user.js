@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.11.18.2149
+// @version      2026.11.19.1702
 // @description  Media download and quick save for Facebook, Instagram, Threads, TikTok and YouTube.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -1426,7 +1426,15 @@ location.hostname.includes("facebook.com") &&
         .map(String);
       if (ids.length < 2) return;
       const group = { ids, count: attachment.all_subattachments.count || ids.length };
-      for (const id of ids) if ((photoGroups.get(id)?.ids.length || 0) < ids.length) photoGroups.set(id, group);
+      // The same set appears several times in the page data, sometimes without
+      // its count (the real total, "+N" included): keep the largest count seen.
+      for (const id of ids) {
+        const known = photoGroups.get(id);
+        if (!known || known.ids.length < ids.length) {
+          if (known) group.count = Math.max(group.count, known.count);
+          photoGroups.set(id, group);
+        } else if (group.count > known.count) known.count = group.count;
+      }
     }
     // Videos carry progressive_urls (SD and HD MP4 with sound) and a DASH
     // manifest whose picture-only streams go higher (e.g. 1080p over a 720p
