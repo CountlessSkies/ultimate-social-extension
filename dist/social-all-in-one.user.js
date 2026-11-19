@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.11.19.1702
+// @version      2026.11.19.2045
 // @description  Media download and quick save for Facebook, Instagram, Threads, TikTok and YouTube.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -3525,7 +3525,13 @@ location.hostname.endsWith("youtube.com") &&
           if (!url) return void scSetState(button, "error", "Không thấy link video");
           // Chrome asks once whether to open ytg; nothing reports back, so
           // the button only confirms that the link was handed over.
-          location.href = `ytg:${encodeURIComponent(url)}`;
+          // Launch from a hidden frame, not by navigating the tab: Opera
+          // closed the YouTube tab after handing location.href to ytg.
+          const frame = document.createElement("iframe");
+          frame.style.display = "none";
+          frame.src = `ytg:${encodeURIComponent(url)}`;
+          document.body.append(frame);
+          setTimeout(() => frame.remove(), 5000);
           scSetState(button, "done", "Đã gửi sang ytg — xem tiến trình trong cửa sổ console");
         },
         true,
