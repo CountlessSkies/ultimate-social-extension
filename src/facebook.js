@@ -396,18 +396,53 @@ location.hostname.includes("facebook.com") &&
     // Picks the download URL at click time, so a story that advanced since the
     // last scan is not confused with the previous one. A blob: video source
     // (MSE playback) is skipped in favour of the real CDN URL.
+    // The card on screen. Its element carries the card id (base64 "S:_ISC:…")
+    // as data-id. The URL is only a fallback: it keeps the first card while
+    // the viewer moves on to the next cards and buckets.
+    function storyCardId(box) {
+      const card = box && box.closest('[data-id^="UzpfSVND"]');
+      return card ? card.getAttribute("data-id") : location.pathname.split("/").filter(Boolean).at(-1);
+    }
+
+    // Fallback for a card missing from the captured data: the video id from
+    // the player's React props. The story <video> has no fiber of its own, so
+    // its fiber is found from the nearest React root (only run on click).
+    function storyVideoId(video) {
+      if (!video) return;
+      let host = video;
+      const rootKey = (node) => Object.keys(node).find((k) => k.startsWith("__reactContainer$"));
+      while (host && !rootKey(host)) host = host.parentElement;
+      if (!host) return;
+      const stack = [host[rootKey(host)]];
+      let fiber;
+      for (let n = 0; stack.length && n++ < 2e5; ) {
+        const f = stack.pop();
+        if (f.stateNode === video) {
+          fiber = f;
+          break;
+        }
+        if (f.sibling) stack.push(f.sibling);
+        if (f.child) stack.push(f.child);
+      }
+      for (let i = 0; fiber && i < 40; i++, fiber = fiber.return) {
+        const id = fiber.memoizedProps && fiber.memoizedProps.videoFBID;
+        if (id) return String(id);
+      }
+    }
+
     function storyMedia() {
       const { player, video, image } = currentStory();
-      // The card in the URL maps to its video in the GraphQL data (also for
-      // photo stories Facebook turned into a video, e.g. with music).
+      const box = player || video || image;
+      // The card maps to its video in the GraphQL data (also for photo
+      // stories Facebook turned into a video, e.g. with music).
       scanPageData();
-      const card = location.pathname.split("/").filter(Boolean).at(-1);
-      const videoId = storyVideos.get(card);
+      const card = storyCardId(box);
+      const videoId = storyVideos.get(card) || storyVideoId(video);
       const known = videos.get(videoId);
-      if (known) return { url: bestVideoUrl(known), ext: "mp4", box: player || video || image, videoId };
+      if (known) return { url: bestVideoUrl(known), ext: "mp4", box, videoId, card };
       if (!player && !video) {
         const url = httpUrl(image && (image.currentSrc || image.src));
-        return url && { url, ext: (url.match(/\.(jpe?g|png|webp)(?:[?#]|$)/i) || [])[1] || "jpg", box: image };
+        return url && { url, ext: (url.match(/\.(jpe?g|png|webp)(?:[?#]|$)/i) || [])[1] || "jpg", box: image, card };
       }
       const recentSniffed = sniffed.filter((s) => s.href === location.href).at(-1) || sniffed.at(-1);
       const performanceMp4 = performance
@@ -421,11 +456,11 @@ location.hostname.includes("facebook.com") &&
         (recentSniffed && recentSniffed.url) ||
         performanceMp4 ||
         devtoolsVideoUrl(video, player);
-      return url && { url, ext: "mp4", box: player || video };
+      return url && { url, ext: "mp4", box: player || video, card };
     }
 
     // fb_<username or profile id>_<video id>.mp4 for videos, _<original file name> for photos
-    function storyFilename(url, ext, box, videoId) {
+    function storyFilename(url, ext, box, videoId, card) {
       const skip = new Set(["stories", "profile.php", "l.php", "watch", "reel", "home.php", "groups", "marketplace", "gaming"]);
       let username;
       if (box) {
@@ -446,10 +481,9 @@ location.hostname.includes("facebook.com") &&
           .map((x) => x.name)[0];
       }
       const bucket = (location.pathname.match(/\/stories\/(\d+)/) || [])[1];
-      const last = location.pathname.split("/").filter(Boolean).at(-1);
       let cardId;
       try {
-        cardId = (atob(last).match(/\d{6,}/) || [])[0];
+        cardId = (atob(card).match(/\d{6,}/) || [])[0];
       } catch {}
       const name = videoId ? `${videoId}.mp4` : fileNameOf(url);
       return `fb_${safeName(username || bucket || "unknown")}_${safeName(/\.[a-z0-9]{2,5}$/i.test(name) ? name : `${cardId || "media"}.${ext}`)}`;
@@ -459,7 +493,7 @@ location.hostname.includes("facebook.com") &&
     // wait in the download queue while the viewer moves on to the next story.
     function storyDownloadJob() {
       const media = storyMedia();
-      const name = media && storyFilename(media.url, media.ext, media.box, media.videoId);
+      const name = media && storyFilename(media.url, media.ext, media.box, media.videoId, media.card);
       return async () => {
         if (!media) throw new Error("Chưa lấy được link Story");
         await scSaveUrl(media.url, name);
