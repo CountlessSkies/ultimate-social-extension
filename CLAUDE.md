@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-"Social All-in-One": a single Tampermonkey userscript (plain JavaScript, no dependencies, no package.json) that adds media download and quick save/unsave buttons to Facebook, Instagram, Threads and TikTok, plus a YouTube button that hands the link to an external downloader.
+"Social All-in-One": a single Tampermonkey userscript (plain JavaScript, no dependencies, no package.json) that adds media download and quick save/unsave buttons (Facebook, Instagram) to Facebook, Instagram, Threads and TikTok, plus a YouTube button that hands the link to an external downloader.
 
 ## Commands
 
@@ -27,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `core.js` is an older file, partly minified (single-letter names). It holds:
   - the Instagram ⚡ panel scanner;
   - Instagram Saved-page unsave;
-  - Threads quick save, per-media download buttons and the "all" button;
+  - Threads per-media download buttons and the "all" button (Threads has its own quick save);
   - the Threads post cache.
 
 ### Shared building blocks (`src/shared.js`)

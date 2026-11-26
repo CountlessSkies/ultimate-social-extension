@@ -535,8 +535,8 @@
     });
   }
 
-  // Threads posts with several images/videos: a stack button beside quick
-  // save that downloads every item of the post.
+  // Threads posts with several images/videos: a stack button beside the
+  // More button that downloads every item of the post.
   function threadsMediaCount(post) {
     return [...post.querySelectorAll('img, div[aria-label="Video player"]')].filter((el) => {
       if (el instanceof HTMLImageElement && (/profile picture|avatar/i.test(el.alt) || el.closest('div[aria-label="Video player"]')))
@@ -583,7 +583,8 @@
       "instagram" === t && decorateInstagramUnsave(),
       "threads" === t &&
         ((function () {
-          const t = location.pathname.includes("/saved");
+          // A holder beside each post's More button for the "all" button
+          // (decorateThreadsAll). Threads has its own quick save now.
           document
             .querySelectorAll(
               'svg[aria-label="More"],svg[title="More"],[aria-label*="Tùy chọn"],[aria-label*="Hành động"],[aria-label="More actions"],[aria-label="Actions"]',
@@ -609,69 +610,8 @@
                 i = document.createElement("div");
               (i.className = "sc-threads-save-container"),
                 (i.style.cssText = `position:absolute!important;right:${a > 1 ? "70px" : "38px"};top:-8px;z-index:100;display:flex;align-items:center;`);
-              const s = scButton(
-                "inline",
-                t ? "bookmark-off" : "bookmark",
-                t ? "Bỏ lưu nhanh" : "Lưu nhanh",
-                { small: !0 },
-              );
-              s.classList.add("sc-threads-save-btn"),
-                (s.onclick = (n) => {
-                  if (
-                    (n.preventDefault(),
-                    n.stopPropagation(),
-                    "loading" === s.dataset.state)
-                  )
-                    return;
-                  scSetState(s, "loading"),
-                    (
-                      e.closest('[role="button"]') ||
-                      e.closest("button") ||
-                      e
-                    ).click();
-                  // Menu items are matched on their whole label, so "Save"
-                  // never hits "Unsave" (which would toggle a saved post off).
-                  const findItem = (menu, labels) =>
-                    Array.from(menu.querySelectorAll("div,span,button,a")).find(
-                      (o) =>
-                        o.offsetParent &&
-                        labels.includes(scText(o)) &&
-                        !Array.from(o.children).some((c) =>
-                          labels.includes(scText(c)),
-                        ),
-                    );
-                  const want = t ? ["unsave", "bỏ lưu"] : ["save", "lưu"],
-                    already = t ? ["save", "lưu"] : ["unsave", "bỏ lưu"];
-                  let o = 0;
-                  const r = () => {
-                    const e =
-                      Array.from(
-                        document.querySelectorAll('[role="menu"]'),
-                      ).find((t) => !!t.offsetParent) || null;
-                    const item = e && findItem(e, want);
-                    if (item) {
-                      (
-                        item.closest('[role="menuitem"],button,[role="button"]') ||
-                        item
-                      ).click();
-                      scSetIcon(s, t ? "bookmark" : "bookmark-filled", t ? "Đã bỏ lưu" : "Đã lưu");
-                      scSetState(s, "done");
-                    } else if (e && findItem(e, already)) {
-                      // Already in the wanted state: close the menu, report done.
-                      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: !0 }));
-                      scSetIcon(s, t ? "bookmark" : "bookmark-filled", t ? "Đã bỏ lưu" : "Đã lưu");
-                      scSetState(s, "done");
-                    } else if (++o < 15) setTimeout(r, 300);
-                    else {
-                      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: !0 }));
-                      scSetState(s, "error", "Không tìm thấy mục Lưu");
-                    }
-                  };
-                  setTimeout(r, 600);
-                }),
-                "static" === getComputedStyle(r).position &&
-                  (r.style.position = "relative"),
-                i.append(s),
+              "static" === getComputedStyle(r).position &&
+                (r.style.position = "relative"),
                 r.append(i);
             });
         })(),
@@ -1072,7 +1012,7 @@
         once: !0,
       });
     GM_addStyle(
-      "#sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:#635bff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s ease}#sc-launcher:hover{transform:scale(1.06)}#sc-launcher .sc-icon{width:20px;height:20px}#sc-panel{position:fixed;right:18px;bottom:68px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#161618;color:#e7e7ea;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:14px;font:13px system-ui,sans-serif}#sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.06);color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:8px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:rgba(255,255,255,.08)}.sc-btn.danger{background:#b4232f}.sc-muted{color:#8d8d94;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:rgba(0,0,0,.35);border-radius:8px}.sc-ov.sc-unsave-btn{right:8px;top:8px}.sc-ov.sc-thread-btn{right:10px;top:10px}.sc-in.sc-threads-save-btn,.sc-in.sc-threads-all-btn{color:var(--barcelona-secondary-icon,currentColor)!important}"
+      "#sc-launcher{position:fixed;right:18px;bottom:18px;z-index:2147483646;width:40px;height:40px;padding:0;border:0;border-radius:50%;background:#635bff;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:transform .15s ease}#sc-launcher:hover{transform:scale(1.06)}#sc-launcher .sc-icon{width:20px;height:20px}#sc-panel{position:fixed;right:18px;bottom:68px;z-index:2147483646;width:350px;max-height:75vh;overflow:auto;background:#161618;color:#e7e7ea;border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:14px;font:13px system-ui,sans-serif}#sc-panel[hidden]{display:none}.sc-row{display:flex;gap:8px;margin:8px 0}.sc-row>*{min-width:0}.sc-input{flex:1;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.06);color:#fff}.sc-btn{padding:8px 10px;border:0;border-radius:8px;background:#635bff;color:#fff;cursor:pointer}.sc-btn:disabled{opacity:.5;cursor:wait}.sc-btn.alt{background:rgba(255,255,255,.08)}.sc-btn.danger{background:#b4232f}.sc-muted{color:#8d8d94;margin:6px 0}.sc-status{white-space:pre-wrap;max-height:160px;overflow:auto;padding:8px;background:rgba(0,0,0,.35);border-radius:8px}.sc-ov.sc-unsave-btn{right:8px;top:8px}.sc-ov.sc-thread-btn{right:10px;top:10px}.sc-in.sc-threads-all-btn{color:var(--barcelona-secondary-icon,currentColor)!important}"
     ),
       // The ⚡ scanner only works on instagram.com (it calls Instagram APIs).
       "instagram" === u() && _(),
