@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Social All-in-One
 // @namespace    github.com/CountlessSkies/ultimate-social-extension
-// @version      2026.11.26.2022
+// @version      2026.11.26.2040
 // @description  Media download and quick save for Facebook, Instagram, Threads, TikTok and YouTube.
 // @match        https://*.facebook.com/*
 // @match        https://*.instagram.com/*
@@ -3369,11 +3369,12 @@ location.hostname.endsWith("tiktok.com") &&
     };
 
     // Feed items (For You, Following, a video page): first in the action bar.
+    // The check is on the bar itself, not a mark on the post: on a video page
+    // TikTok re-renders the first post's bar after load, dropping the button.
     function decorateFeed() {
-      document.querySelectorAll('article:not([data-sc-tt]), [data-e2e="recommend-list-item-container"]:not([data-sc-tt])').forEach((post) => {
+      document.querySelectorAll('article, [data-e2e="recommend-list-item-container"]').forEach((post) => {
         const bar = post.querySelector('[class*="SectionActionBarContainer"]');
-        if (!bar || !post.querySelector('[data-e2e="feed-video"], [id*="xgwrapper"]')) return;
-        post.dataset.scTt = "1";
+        if (!bar || bar.querySelector(".sc-tt-action") || !post.querySelector('[data-e2e="feed-video"], [id*="xgwrapper"]')) return;
         const button = scButton("inline", "download", "Tải video/ảnh (bản nét nhất)");
         button.classList.add("sc-tt-action");
         const stop = stopEvents(button);
