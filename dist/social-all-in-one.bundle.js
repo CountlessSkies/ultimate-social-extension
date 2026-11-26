@@ -3305,6 +3305,13 @@ location.hostname.endsWith("tiktok.com") &&
       const list = data.itemList || data.item_list || data.items || (Array.isArray(data.data) ? data.data : []);
       for (const entry of list) remember((entry && entry.item) || entry);
       if (data.itemInfo) remember(data.itemInfo.itemStruct);
+      // story/batch/item_list nests one item list per author.
+      for (const value of Object.values(data))
+        if (Array.isArray(value))
+          for (const group of value) {
+            const nested = group && (group.itemList || group.item_list || group.items);
+            if (Array.isArray(nested)) nested.forEach((entry) => remember((entry && entry.item) || entry));
+          }
     }
     function scanPageData() {
       const script = document.getElementById("__UNIVERSAL_DATA_FOR_REHYDRATION__");
@@ -3456,6 +3463,32 @@ location.hostname.endsWith("tiktok.com") &&
     }
     window.addEventListener("resize", () => decorateBrowse());
 
+    // Story viewer (#stories-player, opened from an avatar): an overlay below
+    // the card's header. The URL follows the story shown (/video/<id> or
+    // /photo/<id>) and the items come from the story/item_list responses.
+    let storyButton = null;
+    function decorateStory() {
+      const card = document.querySelector('#stories-player [class*="SectionMediaCardContainer"]');
+      if (!card || !idFromHref(location.pathname)) return void storyButton?.remove();
+      if (!storyButton) {
+        storyButton = scButton("overlay", "download", "Tải story (bản nét nhất)");
+        storyButton.classList.add("sc-tt-browse", "sc-tt-story");
+        const stop = stopEvents(storyButton);
+        storyButton.addEventListener(
+          "click",
+          (e) => {
+            stop(e);
+            scRun(storyButton, () => downloadItem(idFromHref(location.pathname)));
+          },
+          true,
+        );
+      }
+      if (storyButton.parentElement !== card) {
+        if (getComputedStyle(card).position === "static") card.style.position = "relative";
+        card.append(storyButton);
+      }
+    }
+
     // Grid tiles (profile, explore, search, "you may like"): overlay buttons.
     function decorateTiles() {
       document.querySelectorAll('a[href*="/video/"]:not([data-sc-tt]), a[href*="/photo/"]:not([data-sc-tt])').forEach((link) => {
@@ -3487,13 +3520,14 @@ location.hostname.endsWith("tiktok.com") &&
 
     // TikTok's own action buttons are 48px grey circles with white icons.
     GM_addStyle(
-      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px;z-index:2!important}.sc-ov.sc-tt-browse{top:72px;z-index:5!important;width:52px!important;height:52px!important}.sc-ov.sc-tt-browse .sc-icon{width:28px;height:28px}",
+      ".sc-in.sc-tt-action{width:48px!important;height:48px!important;margin-bottom:12px!important;background:rgba(127,127,127,.22)!important;color:#fff!important}.sc-in.sc-tt-action:hover{background:rgba(127,127,127,.36)!important}.sc-ov.sc-tt-tile{right:8px;top:8px;z-index:2!important}.sc-ov.sc-tt-browse{top:72px;z-index:5!important;width:52px!important;height:52px!important}.sc-ov.sc-tt-browse .sc-icon{width:28px;height:28px}.sc-ov.sc-tt-story{top:100px;right:16px;z-index:10!important}",
     );
 
     scWatchDom(() => {
       scanPageData();
       decorateFeed();
       decorateBrowse();
+      decorateStory();
       decorateTiles();
     });
   })();
